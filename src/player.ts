@@ -1,7 +1,7 @@
 // The full-screen Wrapped player and the shareable summary card.
 
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
-import { fmt, hourLabel, MONTHS, WEEKDAYS, type RenderedSlide, type Wrap } from './shared'
+import { fmt, hourLabel, MONTHS, splitQuote, WEEKDAYS, type RenderedSlide, type Wrap } from './shared'
 
 export interface PlayerOptions {
   slideSeconds: number
@@ -75,9 +75,20 @@ const CHAT_SLIDES: Record<string, (w: Wrap) => string | undefined> = {
 
 export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: PlayerOptions): PlayerHandle {
   let wrap = initial
-  /** The wrap's slides plus the Expose me menu at the very end. */
+  /**
+   * The main Wrapped ends at the outro. The bonus round (Expose me menu plus
+   * any saved roasts) is only added once you tap into it.
+   */
+  let bonus = false
+  let slides: RenderedSlide[] = []
   const menuSlide = (): RenderedSlide => ({ id: 'expose_menu', title: 'Expose me', text: menuLine(wrap) })
-  let slides: RenderedSlide[] = [...wrap.slides, menuSlide()]
+  // Older wraps kept the QUOTE line in the text; tidy it on the way in.
+  const fixSlide = (x: RenderedSlide): RenderedSlide => (x.id === 'quotes' && /quote\s*[*_]*\s*:/i.test(x.text) ? { ...x, ...splitQuote(x.text) } : x)
+  function buildSlides() {
+    const main = wrap.slides.filter(x => x.id !== 'expose').map(fixSlide)
+    slides = bonus ? [...main, menuSlide(), ...wrap.slides.filter(x => x.id === 'expose')] : main
+  }
+  buildSlides()
   let index = Math.max(0, Math.min(opts.startAt || 0, slides.length - 1))
   if (opts.startAt === undefined) index = 0
   let paused = false
@@ -336,26 +347,33 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
           <div class="lw-star">⭐</div>
           <div class="lw-huge lw-gold">${esc(s.archetype.name)}</div>
           <div class="lw-sub">${esc(s.archetype.blurb)}</div>`
-      case 'expose':
-        return `<div class="lw-kicker">Exposed</div>
-          <div class="lw-stamp">EXPOSED</div>
-          <div class="lw-quote-title">“${esc(slide.chatName || '')}”</div>
-          <div class="lw-sub">with ${esc(slide.characterName || '')}</div>`
       case 'expose_menu': {
-        const done = new Set(wrap.slides.filter(x => x.id === 'expose').map(x => x.chatId || x.chatName))
+        const roasts = slides.map((x, i) => ({ x, i })).filter(r => r.x.id === 'expose')
         const list = wrap.chats
           .map(c => {
-            const exposed = done.has(c.id) || done.has(c.name)
-            const at = exposed ? wrap.slides.findIndex(x => x.id === 'expose' && (x.chatId === c.id || x.chatName === c.name)) : -1
-            return `<button class="lw-menu-item${exposed ? ' done' : ''}" ${exposed ? `data-goto="${at}"` : `data-expose="${esc(c.id)}"`}>
-              <span><b>“${esc(c.name)}”</b><small>${esc(c.characterName)}</small></span><i>${exposed ? 'read again' : 'expose'}</i></button>`
+            const r = roasts.find(r => r.x.chatId === c.id || (!r.x.chatId && r.x.chatName === c.name))
+            return `<button class="lw-menu-item${r ? ' done' : ''}" ${r ? `data-goto="${r.i}"` : `data-expose="${esc(c.id)}"`}>
+              <span><b>“${esc(c.name)}”</b><small>${esc(c.characterName)}</small></span><i>${r ? 'read again' : 'expose'}</i></button>`
           })
           .join('')
         return `<div class="lw-kicker">Bonus round</div>
           <div class="lw-huge">Expose me</div>
           <div class="lw-sub">Pick a chat and get roasted for it. You'll see the cost first.</div>
+          <div class="lw-actions">
+            <button class="lw-btn" data-act="random">🎲 Surprise me</button>
+            <button class="lw-btn lw-btn-ghost" data-act="endbonus">‹ Back to Wrapped</button>
+          </div>
           <div class="lw-menu">${list || '<div class="lw-sub">No chats to expose.</div>'}</div>`
       }
+      case 'expose':
+        return `<div class="lw-kicker">Exposed</div>
+          <div class="lw-stamp">EXPOSED</div>
+          <div class="lw-quote-title">“${esc(slide.chatName || '')}”</div>
+          <div class="lw-sub">with ${esc(slide.characterName || '')}</div>
+          <div class="lw-actions">
+            <button class="lw-btn lw-btn-ghost" data-act="menu">‹ Expose another</button>
+            <button class="lw-btn lw-btn-ghost" data-act="endbonus">Back to Wrapped</button>
+          </div>`
       case 'outro': {
         return `<div class="lw-fireworks" aria-hidden="true">${'<i></i>'.repeat(5)}</div>
           <div class="lw-kicker">${esc(slide.title)}</div>
@@ -365,10 +383,29 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
             <button class="lw-btn" data-act="save">⬇ Save image</button>
             <button class="lw-btn lw-btn-ghost" data-act="replay">↺ Replay</button>
           </div>
-          <button class="lw-next-hint" data-act="next">🔍 Expose me ›</button>`
+          <button class="lw-next-hint" data-act="bonus">🔍 Expose me ›</button>`
       }
       default:
         return title
+    }
+  }
+
+  /** Pick one of the three chats with the most messages, preferring ones not exposed yet. */
+  function surprise() {
+    const listed = new Set(wrap.chats.map(c => c.id))
+    let top = wrap.stats.topChats.filter(c => listed.has(c.id)).slice(0, 3).map(c => c.id)
+    if (!top.length) top = wrap.chats.slice(0, 3).map(c => c.id)
+    if (!top.length) return
+    const done = new Set(wrap.slides.filter(x => x.id === 'expose').map(x => x.chatId))
+    const fresh = top.filter(id => !done.has(id))
+    const pool = fresh.length ? fresh : top
+    const id = pool[Math.floor(Math.random() * pool.length)]
+    if (fresh.length) {
+      setPaused(true)
+      opts.onExpose(id)
+    } else {
+      const at = slides.findIndex(x => x.id === 'expose' && x.chatId === id)
+      if (at >= 0) show(at)
     }
   }
 
@@ -577,6 +614,15 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     } else if (act?.dataset.act === 'save') saveCard()
     else if (act?.dataset.act === 'replay') show(0)
     else if (act?.dataset.act === 'next') next()
+    else if (act?.dataset.act === 'bonus' || act?.dataset.act === 'menu') {
+      bonus = true
+      buildSlides()
+      show(slides.findIndex(x => x.id === 'expose_menu'))
+    } else if (act?.dataset.act === 'endbonus') {
+      bonus = false
+      buildSlides()
+      show(slides.findIndex(x => x.id === 'outro'))
+    } else if (act?.dataset.act === 'random') surprise()
     else if (t.closest('[data-goto]')) show(Number(t.closest<HTMLElement>('[data-goto]')!.dataset.goto))
   })
 
@@ -615,9 +661,10 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     close,
     updateWrap(w, jumpTo) {
       wrap = w
-      slides = [...wrap.slides, menuSlide()]
+      bonus = true
+      buildSlides()
       renderHost()
-      show(jumpTo ?? Math.min(index, slides.length - 1))
+      show(jumpTo === undefined ? Math.min(index, slides.length - 1) : slides.length - 1)
       setPaused(false)
     },
     ask(message, okLabel) {

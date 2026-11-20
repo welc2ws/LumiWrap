@@ -2,6 +2,7 @@ declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 
 import {
   characterAvatarUrl,
+  splitQuote,
   DEFAULT_SETTINGS,
   fillMacros,
   fmt,
@@ -512,28 +513,6 @@ async function summarizeChat(chatId: string, charName: string, userName: string,
 }
 
 // ---------- making the wrap ----------
-
-/** Pull the "QUOTE: ... — speaker" line out of the quotes slide. */
-function splitQuote(text: string): { text: string; quote?: string; quoteBy?: string } {
-  const lines = text.split('\n')
-  const i = lines.findIndex(l => /^\s*\**\s*quote\s*\**\s*:/i.test(l))
-  let line = ''
-  let rest = text
-  if (i >= 0) {
-    line = lines[i].replace(/^\s*\**\s*quote\s*\**\s*:\s*\**\s*/i, '').trim()
-    rest = lines.filter((_, j) => j !== i).join('\n').trim()
-  } else {
-    // No QUOTE line: fall back to the first quoted passage.
-    const m = text.match(/["“]([^"”]{6,240})["”](\s*[—–-]\s*[A-Z][\w']*(?:\s[A-Z][\w']*)?)?/)
-    if (!m) return { text }
-    line = m[0]
-  }
-  const m = line.match(/^["“]?([\s\S]*?)["”]?\s*(?:[—–]|\s-\s)\s*(.{1,60})$/)
-  const quote = (m ? m[1] : line).replace(/^["“]|["”]$/g, '').trim()
-  const quoteBy = m ? m[2].replace(/[*_]/g, '').trim() : undefined
-  if (!quote) return { text }
-  return { text: rest || text, quote: quote.slice(0, 300), quoteBy }
-}
 
 function builtinLine(hostId: string, slideId: string, vars: Record<string, string>) {
   const lines = BUILTIN_LINES[(hostId as 'past') in BUILTIN_LINES ? (hostId as 'past') : 'past']

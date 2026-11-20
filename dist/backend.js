@@ -116,6 +116,47 @@ function clamp(n, lo, hi, fallback) {
     return fallback;
   return Math.min(hi, Math.max(lo, n));
 }
+var QUOTE_MARK = /^[ \t]*[*_]*[ \t]*quote[ \t]*[*_]*[ \t]*:[ \t]*[*_]*[ \t]*/im;
+var SPEAKER = /^\s*(?:[\u2014\u2013]|-{1,2})\s*([^\s.,!?;:\u2014\u2013\n"\u201C\u201D][^.,!?;:\u2014\u2013\n"\u201C\u201D]{0,38}?)(?=\s*[.,!?;:]|\s*\n|\s*$)/;
+function tidy(t) {
+  return t.replace(/^[\s.,;:!]+/, "").replace(/\n{3,}/g, `
+
+`).trim();
+}
+function splitQuote(text) {
+  const mark = text.match(QUOTE_MARK);
+  if (mark && mark.index !== undefined) {
+    const before = text.slice(0, mark.index);
+    const after = text.slice(mark.index + mark[0].length);
+    const q = after.match(/^["\u201C]([\s\S]+?)["\u201D]/);
+    if (q) {
+      let end = q[0].length;
+      let by;
+      const sp = after.slice(end).match(SPEAKER);
+      if (sp) {
+        by = sp[1].replace(/[*_]/g, "").trim();
+        end += sp[0].length;
+      }
+      const reaction = tidy(before + " " + after.slice(end));
+      return { quote: q[1].trim().slice(0, 300), quoteBy: by, text: reaction || q[1].trim() };
+    }
+    const nl = after.indexOf(`
+`);
+    const line = nl >= 0 ? after.slice(0, nl) : after;
+    const rest = nl >= 0 ? after.slice(nl + 1) : "";
+    const dash = line.match(/^([\s\S]+?)\s+[\u2014\u2013]\s+([^\u2014\u2013]{1,40})$/);
+    const quote = (dash ? dash[1] : line).trim();
+    if (!quote)
+      return { text };
+    return { quote: quote.slice(0, 300), quoteBy: dash?.[2].trim(), text: tidy(before + `
+` + rest) || quote };
+  }
+  const m = text.match(/["\u201C]([^"\u201D]{6,240})["\u201D]/);
+  if (!m)
+    return { text };
+  const sp = text.slice((m.index || 0) + m[0].length).match(/^\s*[\u2014\u2013-]\s*([A-Z][\w']*(?:\s[A-Z][\w']*)?)/);
+  return { text, quote: m[1].trim(), quoteBy: sp ? sp[1].trim() : undefined };
+}
 function characterAvatarUrl(id, imageId, size = "sm") {
   if (!id)
     return null;
@@ -955,29 +996,6 @@ Rewrite the story so far to include the new events: the plot, relationship beats
   }
   await spindle.userStorage.setJson(deepPath(chatId), { messageCount: msgs.length, summary }, { userId });
   return { summary, tokens };
-}
-function splitQuote(text) {
-  const lines = text.split(`
-`);
-  const i = lines.findIndex((l) => /^\s*\**\s*quote\s*\**\s*:/i.test(l));
-  let line = "";
-  let rest = text;
-  if (i >= 0) {
-    line = lines[i].replace(/^\s*\**\s*quote\s*\**\s*:\s*\**\s*/i, "").trim();
-    rest = lines.filter((_, j) => j !== i).join(`
-`).trim();
-  } else {
-    const m = text.match(/["\u201C]([^"\u201D]{6,240})["\u201D](\s*[\u2014\u2013-]\s*[A-Z][\w']*(?:\s[A-Z][\w']*)?)?/);
-    if (!m)
-      return { text };
-    line = m[0];
-  }
-  const m = line.match(/^["\u201C]?([\s\S]*?)["\u201D]?\s*(?:[\u2014\u2013]|\s-\s)\s*(.{1,60})$/);
-  const quote = (m ? m[1] : line).replace(/^["\u201C]|["\u201D]$/g, "").trim();
-  const quoteBy = m ? m[2].replace(/[*_]/g, "").trim() : undefined;
-  if (!quote)
-    return { text };
-  return { text: rest || text, quote: quote.slice(0, 300), quoteBy };
 }
 function builtinLine(hostId, slideId, vars) {
   const lines = BUILTIN_LINES[hostId in BUILTIN_LINES ? hostId : "past"];

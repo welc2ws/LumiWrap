@@ -345,6 +345,53 @@ export interface WrapSummary {
   scopeName: string
 }
 
+// ---------- quote of the year ----------
+
+const QUOTE_MARK = /^[ \t]*[*_]*[ \t]*quote[ \t]*[*_]*[ \t]*:[ \t]*[*_]*[ \t]*/im
+const SPEAKER = /^\s*(?:[—–]|-{1,2})\s*([^\s.,!?;:—–\n"“”][^.,!?;:—–\n"“”]{0,38}?)(?=\s*[.,!?;:]|\s*\n|\s*$)/
+
+function tidy(t: string) {
+  return t.replace(/^[\s.,;:!]+/, '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/**
+ * Split the quotes slide into the quote (shown on the panel), who said it,
+ * and the host's reaction (shown in the bubble). Handles the QUOTE line being
+ * on its own line or run together with the reaction.
+ */
+export function splitQuote(text: string): { text: string; quote?: string; quoteBy?: string } {
+  const mark = text.match(QUOTE_MARK)
+  if (mark && mark.index !== undefined) {
+    const before = text.slice(0, mark.index)
+    const after = text.slice(mark.index + mark[0].length)
+    const q = after.match(/^["“]([\s\S]+?)["”]/)
+    if (q) {
+      let end = q[0].length
+      let by: string | undefined
+      const sp = after.slice(end).match(SPEAKER)
+      if (sp) {
+        by = sp[1].replace(/[*_]/g, '').trim()
+        end += sp[0].length
+      }
+      const reaction = tidy(before + ' ' + after.slice(end))
+      return { quote: q[1].trim().slice(0, 300), quoteBy: by, text: reaction || q[1].trim() }
+    }
+    // Unquoted: the rest of the line is the quote, maybe ending in "— Name".
+    const nl = after.indexOf('\n')
+    const line = nl >= 0 ? after.slice(0, nl) : after
+    const rest = nl >= 0 ? after.slice(nl + 1) : ''
+    const dash = line.match(/^([\s\S]+?)\s+[—–]\s+([^—–]{1,40})$/)
+    const quote = (dash ? dash[1] : line).trim()
+    if (!quote) return { text }
+    return { quote: quote.slice(0, 300), quoteBy: dash?.[2].trim(), text: tidy(before + '\n' + rest) || quote }
+  }
+  // No QUOTE line: use the first quoted passage, leave the text as it is.
+  const m = text.match(/["“]([^"”]{6,240})["”]/)
+  if (!m) return { text }
+  const sp = text.slice((m.index || 0) + m[0].length).match(/^\s*[—–-]\s*([A-Z][\w']*(?:\s[A-Z][\w']*)?)/)
+  return { text, quote: m[1].trim(), quoteBy: sp ? sp[1].trim() : undefined }
+}
+
 /** Lumiverse avatar URL for a character (same origin as the app). */
 export function characterAvatarUrl(id: string, imageId?: string | null, size: 'sm' | 'lg' = 'sm') {
   if (!id) return null

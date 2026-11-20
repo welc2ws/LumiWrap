@@ -51,6 +51,47 @@ var DEFAULT_SLIDES = [
   { id: "outro", title: "See you next year", enabled: true, needs: "stats", prompt: "Wrap it up. A heartfelt (in your own way) send-off and a tease for {{nextYear}}." }
 ];
 var SLIDE_IDS = DEFAULT_SLIDES.map((s) => s.id);
+var QUOTE_MARK = /^[ \t]*[*_]*[ \t]*quote[ \t]*[*_]*[ \t]*:[ \t]*[*_]*[ \t]*/im;
+var SPEAKER = /^\s*(?:[—–]|-{1,2})\s*([^\s.,!?;:—–\n"“”][^.,!?;:—–\n"“”]{0,38}?)(?=\s*[.,!?;:]|\s*\n|\s*$)/;
+function tidy(t) {
+  return t.replace(/^[\s.,;:!]+/, "").replace(/\n{3,}/g, `
+
+`).trim();
+}
+function splitQuote(text) {
+  const mark = text.match(QUOTE_MARK);
+  if (mark && mark.index !== undefined) {
+    const before = text.slice(0, mark.index);
+    const after = text.slice(mark.index + mark[0].length);
+    const q = after.match(/^["“]([\s\S]+?)["”]/);
+    if (q) {
+      let end = q[0].length;
+      let by;
+      const sp = after.slice(end).match(SPEAKER);
+      if (sp) {
+        by = sp[1].replace(/[*_]/g, "").trim();
+        end += sp[0].length;
+      }
+      const reaction = tidy(before + " " + after.slice(end));
+      return { quote: q[1].trim().slice(0, 300), quoteBy: by, text: reaction || q[1].trim() };
+    }
+    const nl = after.indexOf(`
+`);
+    const line = nl >= 0 ? after.slice(0, nl) : after;
+    const rest = nl >= 0 ? after.slice(nl + 1) : "";
+    const dash = line.match(/^([\s\S]+?)\s+[—–]\s+([^—–]{1,40})$/);
+    const quote = (dash ? dash[1] : line).trim();
+    if (!quote)
+      return { text };
+    return { quote: quote.slice(0, 300), quoteBy: dash?.[2].trim(), text: tidy(before + `
+` + rest) || quote };
+  }
+  const m = text.match(/["“]([^"”]{6,240})["”]/);
+  if (!m)
+    return { text };
+  const sp = text.slice((m.index || 0) + m[0].length).match(/^\s*[—–-]\s*([A-Z][\w']*(?:\s[A-Z][\w']*)?)/);
+  return { text, quote: m[1].trim(), quoteBy: sp ? sp[1].trim() : undefined };
+}
 var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 var WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function hourLabel(h) {
@@ -437,7 +478,9 @@ var STYLES = `
 .lw-quote-by { font-size: max(13px, 3.6cqw); font-weight: 700; color: var(--lw-hi); }
 
 /* expose menu */
-.lw-menu { width: 100%; display: flex; flex-direction: column; gap: 8px; max-height: 40cqh; overflow-y: auto; padding: 2px; }
+.lw-menu { width: 100%; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px 2px 8px;
+  pointer-events: auto; touch-action: pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.lw-menu .lw-menu-item { flex: none; }
 .lw-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 14px; cursor: pointer; text-align: left;
   border: 1.5px solid rgba(255,255,255,.25); background: rgba(0,0,0,.25); color: #fff; font: inherit; }
 .lw-menu-item:hover { background: rgba(0,0,0,.4); border-color: rgba(255,255,255,.6); }
@@ -451,7 +494,8 @@ var STYLES = `
   color: #fff; background: rgba(255,255,255,.14); }
 .lw-next-hint:hover { background: rgba(255,255,255,.24); }
 .lw-stage[data-slide="expose_menu"] .lw-host { height: 17cqh; }
-.lw-stage[data-slide="expose_menu"] .lw-slide { bottom: 19cqh; justify-content: flex-start; padding-top: 2cqh; }
+.lw-stage[data-slide="expose_menu"] .lw-slide { bottom: 19cqh; justify-content: flex-start; padding-top: 1cqh; gap: 1.2cqh; }
+.lw-stage[data-slide="expose_menu"] .lw-huge { font-size: clamp(24px, 8cqw, 40px); }
 .lw-sprite.lw-sprite-pfp { align-items: flex-end; }
 .lw-sprite.lw-sprite-pfp img { width: 100%; max-width: 120px; aspect-ratio: 1; height: auto; max-height: none; object-fit: cover; object-position: top;
   border-radius: 50%; border: 4px solid var(--lw-accent); box-shadow: 0 8px 22px rgba(0,0,0,.45); }
@@ -583,8 +627,15 @@ var THEME = {
 };
 function openPlayer(ctx, initial, opts) {
   let wrap = initial;
+  let bonus = false;
+  let slides = [];
   const menuSlide = () => ({ id: "expose_menu", title: "Expose me", text: menuLine(wrap) });
-  let slides = [...wrap.slides, menuSlide()];
+  const fixSlide = (x) => x.id === "quotes" && /quote\s*[*_]*\s*:/i.test(x.text) ? { ...x, ...splitQuote(x.text) } : x;
+  function buildSlides() {
+    const main = wrap.slides.filter((x) => x.id !== "expose").map(fixSlide);
+    slides = bonus ? [...main, menuSlide(), ...wrap.slides.filter((x) => x.id === "expose")] : main;
+  }
+  buildSlides();
   let index = Math.max(0, Math.min(opts.startAt || 0, slides.length - 1));
   if (opts.startAt === undefined)
     index = 0;
@@ -821,24 +872,31 @@ function openPlayer(ctx, initial, opts) {
           <div class="lw-star">⭐</div>
           <div class="lw-huge lw-gold">${esc(s.archetype.name)}</div>
           <div class="lw-sub">${esc(s.archetype.blurb)}</div>`;
-      case "expose":
-        return `<div class="lw-kicker">Exposed</div>
-          <div class="lw-stamp">EXPOSED</div>
-          <div class="lw-quote-title">“${esc(slide.chatName || "")}”</div>
-          <div class="lw-sub">with ${esc(slide.characterName || "")}</div>`;
       case "expose_menu": {
-        const done = new Set(wrap.slides.filter((x) => x.id === "expose").map((x) => x.chatId || x.chatName));
+        const roasts = slides.map((x, i) => ({ x, i })).filter((r) => r.x.id === "expose");
         const list = wrap.chats.map((c) => {
-          const exposed = done.has(c.id) || done.has(c.name);
-          const at = exposed ? wrap.slides.findIndex((x) => x.id === "expose" && (x.chatId === c.id || x.chatName === c.name)) : -1;
-          return `<button class="lw-menu-item${exposed ? " done" : ""}" ${exposed ? `data-goto="${at}"` : `data-expose="${esc(c.id)}"`}>
-              <span><b>“${esc(c.name)}”</b><small>${esc(c.characterName)}</small></span><i>${exposed ? "read again" : "expose"}</i></button>`;
+          const r = roasts.find((r) => r.x.chatId === c.id || !r.x.chatId && r.x.chatName === c.name);
+          return `<button class="lw-menu-item${r ? " done" : ""}" ${r ? `data-goto="${r.i}"` : `data-expose="${esc(c.id)}"`}>
+              <span><b>“${esc(c.name)}”</b><small>${esc(c.characterName)}</small></span><i>${r ? "read again" : "expose"}</i></button>`;
         }).join("");
         return `<div class="lw-kicker">Bonus round</div>
           <div class="lw-huge">Expose me</div>
           <div class="lw-sub">Pick a chat and get roasted for it. You'll see the cost first.</div>
+          <div class="lw-actions">
+            <button class="lw-btn" data-act="random">\uD83C\uDFB2 Surprise me</button>
+            <button class="lw-btn lw-btn-ghost" data-act="endbonus">‹ Back to Wrapped</button>
+          </div>
           <div class="lw-menu">${list || '<div class="lw-sub">No chats to expose.</div>'}</div>`;
       }
+      case "expose":
+        return `<div class="lw-kicker">Exposed</div>
+          <div class="lw-stamp">EXPOSED</div>
+          <div class="lw-quote-title">“${esc(slide.chatName || "")}”</div>
+          <div class="lw-sub">with ${esc(slide.characterName || "")}</div>
+          <div class="lw-actions">
+            <button class="lw-btn lw-btn-ghost" data-act="menu">‹ Expose another</button>
+            <button class="lw-btn lw-btn-ghost" data-act="endbonus">Back to Wrapped</button>
+          </div>`;
       case "outro": {
         return `<div class="lw-fireworks" aria-hidden="true">${"<i></i>".repeat(5)}</div>
           <div class="lw-kicker">${esc(slide.title)}</div>
@@ -848,10 +906,30 @@ function openPlayer(ctx, initial, opts) {
             <button class="lw-btn" data-act="save">⬇ Save image</button>
             <button class="lw-btn lw-btn-ghost" data-act="replay">↺ Replay</button>
           </div>
-          <button class="lw-next-hint" data-act="next">\uD83D\uDD0D Expose me ›</button>`;
+          <button class="lw-next-hint" data-act="bonus">\uD83D\uDD0D Expose me ›</button>`;
       }
       default:
         return title;
+    }
+  }
+  function surprise() {
+    const listed = new Set(wrap.chats.map((c) => c.id));
+    let top = wrap.stats.topChats.filter((c) => listed.has(c.id)).slice(0, 3).map((c) => c.id);
+    if (!top.length)
+      top = wrap.chats.slice(0, 3).map((c) => c.id);
+    if (!top.length)
+      return;
+    const done = new Set(wrap.slides.filter((x) => x.id === "expose").map((x) => x.chatId));
+    const fresh = top.filter((id) => !done.has(id));
+    const pool = fresh.length ? fresh : top;
+    const id = pool[Math.floor(Math.random() * pool.length)];
+    if (fresh.length) {
+      setPaused(true);
+      opts.onExpose(id);
+    } else {
+      const at = slides.findIndex((x) => x.id === "expose" && x.chatId === id);
+      if (at >= 0)
+        show(at);
     }
   }
   function drawCard() {
@@ -1047,6 +1125,16 @@ function openPlayer(ctx, initial, opts) {
       show(0);
     else if (act?.dataset.act === "next")
       next();
+    else if (act?.dataset.act === "bonus" || act?.dataset.act === "menu") {
+      bonus = true;
+      buildSlides();
+      show(slides.findIndex((x) => x.id === "expose_menu"));
+    } else if (act?.dataset.act === "endbonus") {
+      bonus = false;
+      buildSlides();
+      show(slides.findIndex((x) => x.id === "outro"));
+    } else if (act?.dataset.act === "random")
+      surprise();
     else if (t.closest("[data-goto]"))
       show(Number(t.closest("[data-goto]").dataset.goto));
   });
@@ -1086,9 +1174,10 @@ function openPlayer(ctx, initial, opts) {
     close,
     updateWrap(w, jumpTo) {
       wrap = w;
-      slides = [...wrap.slides, menuSlide()];
+      bonus = true;
+      buildSlides();
       renderHost();
-      show(jumpTo ?? Math.min(index, slides.length - 1));
+      show(jumpTo === undefined ? Math.min(index, slides.length - 1) : slides.length - 1);
       setPaused(false);
     },
     ask(message, okLabel) {
