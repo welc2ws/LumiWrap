@@ -6,7 +6,6 @@ var DEFAULT_HOSTS = [
     title: "Christmas Past",
     name: "Holly",
     emoji: "\uD83C\uDF84",
-    sprite: "",
     accent: "#e7c46a",
     prompt: `You are {{host}}, the Ghost of Christmas Past, presenting {{user}}'s Lumiwrap: a Spotify Wrapped-style recap of their year of roleplay.
 
@@ -17,7 +16,6 @@ You're decked out like a Christmas tree: tinsel, baubles, fairy lights, a star i
     title: "Christmas Present",
     name: "Noelle",
     emoji: "\uD83D\uDE12",
-    sprite: "",
     accent: "#c8344f",
     prompt: `You are {{host}}, the Ghost of Christmas Present, presenting {{user}}'s Lumiwrap: a Spotify Wrapped-style recap of their year of roleplay.
 
@@ -28,7 +26,6 @@ You're an adult with full annoyed-teenager energy: eye rolls, smirks, resting un
     title: "Christmas Future",
     name: "Vesper",
     emoji: "\uD83D\uDC7B",
-    sprite: "",
     accent: "#9fb4d8",
     prompt: `You are {{host}}, the Ghost of Christmas Yet to Come, presenting {{user}}'s Lumiwrap: a Spotify Wrapped-style recap of their year of roleplay.
 
@@ -62,7 +59,14 @@ var DEFAULT_SETTINGS = {
   topCharCount: 3,
   chatsPerChar: 2,
   slideSeconds: 8,
-  showSpotify: true,
+  maxTokens: null,
+  topP: null,
+  topK: null,
+  minP: null,
+  frequencyPenalty: null,
+  presencePenalty: null,
+  repetitionPenalty: null,
+  noReasoning: false,
   statsCommentary: false,
   characterHostPrompt: DEFAULT_CHARACTER_HOST_PROMPT,
   hosts: DEFAULT_HOSTS,
@@ -83,8 +87,26 @@ function normalizeSettings(saved) {
   s.topCharCount = Math.round(clamp(Number(s.topCharCount), 1, 10, 3));
   s.chatsPerChar = Math.round(clamp(Number(s.chatsPerChar), 1, 10, 2));
   s.slideSeconds = Math.round(clamp(Number(s.slideSeconds), 3, 30, 8));
+  s.maxTokens = opt(s.maxTokens, 64, 32000, true);
+  s.topP = opt(s.topP, 0, 1);
+  s.topK = opt(s.topK, 0, 500, true);
+  s.minP = opt(s.minP, 0, 1);
+  s.frequencyPenalty = opt(s.frequencyPenalty, -2, 2);
+  s.presencePenalty = opt(s.presencePenalty, -2, 2);
+  s.repetitionPenalty = opt(s.repetitionPenalty, 0, 3);
+  s.noReasoning = !!s.noReasoning;
+  s.hosts = s.hosts.map((h) => ({ id: h.id, title: h.title, name: h.name, emoji: h.emoji, accent: h.accent, prompt: h.prompt }));
   s.characterHostPrompt = String(s.characterHostPrompt || "") || DEFAULT_CHARACTER_HOST_PROMPT;
   return s;
+}
+function opt(v, lo, hi, int = false) {
+  if (v === null || v === undefined || v === "")
+    return null;
+  const n = Number(v);
+  if (!Number.isFinite(n))
+    return null;
+  const c = Math.min(hi, Math.max(lo, n));
+  return int ? Math.round(c) : c;
 }
 function clamp(n, lo, hi, fallback) {
   if (!Number.isFinite(n))
@@ -543,6 +565,21 @@ async function countText(text, opts) {
     return { n: Math.ceil(text.length / 4), approximate: true, model: "" };
   }
 }
+function samplerParams(settings, temperature) {
+  const p = { temperature };
+  const set = (key, v) => {
+    if (v !== null && v !== undefined)
+      p[key] = v;
+  };
+  set("max_tokens", settings.maxTokens);
+  set("top_p", settings.topP);
+  set("top_k", settings.topK);
+  set("min_p", settings.minP);
+  set("frequency_penalty", settings.frequencyPenalty);
+  set("presence_penalty", settings.presencePenalty);
+  set("repetition_penalty", settings.repetitionPenalty);
+  return p;
+}
 async function llm(userId, settings, system, prompt, temperature) {
   const input = {
     type: "quiet",
@@ -550,11 +587,13 @@ async function llm(userId, settings, system, prompt, temperature) {
       { role: "system", content: system },
       { role: "user", content: prompt }
     ],
-    parameters: { temperature },
+    parameters: samplerParams(settings, temperature),
     userId
   };
   if (settings.connectionId)
     input.connection_id = settings.connectionId;
+  if (settings.noReasoning)
+    input.reasoning = { source: "off" };
   let full = "";
   for await (const chunk of spindle.generate.quietStream(input)) {
     const c = chunk;
@@ -587,7 +626,7 @@ async function resolveHost(hostRef, settings, userId) {
   }
   const h = settings.hosts.find((x) => x.id === hostRef) || settings.hosts[0];
   return {
-    host: { kind: "builtin", id: h.id, name: h.name, emoji: h.emoji, sprite: h.sprite, accent: h.accent, avatar: null },
+    host: { kind: "builtin", id: h.id, name: h.name, emoji: h.emoji, sprite: "", accent: h.accent, avatar: null },
     prompt: h.prompt,
     card: ""
   };
@@ -1064,28 +1103,44 @@ async function sendLibrary(userId) {
   out.sort((a, b) => b.createdAt - a.createdAt);
   send(userId, { type: "library", wraps: out });
 }
-async function nowPlaying(userId) {
+var SPRITES_PATH = "sprites.json";
+var REQUIRED = ["generation", "characters", "chats", "chat_mutation", "personas"];
+async function loadSprites(userId) {
+  return spindle.userStorage.getJson(SPRITES_PATH, { fallback: {}, userId }).catch(() => ({}));
+}
+async function missingPermissions() {
   try {
-    const { text } = await spindle.macros.resolve("{{spotify_now_playing}}", { userId, commit: false });
-    const t = (text || "").trim();
-    if (!t || t.includes("{{") || /^nothing playing$/i.test(t))
-      return send(userId, { type: "now_playing", text: null });
-    send(userId, { type: "now_playing", text: t.slice(0, 120) });
+    const granted = new Set(await spindle.permissions.getGranted());
+    return REQUIRED.filter((p) => !granted.has(p));
   } catch {
-    send(userId, { type: "now_playing", text: null });
+    return REQUIRED.filter((p) => !spindle.permissions.has(p));
   }
 }
 async function handle(payload, userId) {
   switch (payload?.type) {
     case "init": {
-      const [settings, connections, characters] = await Promise.all([
+      const errors = [];
+      const [settings, connections, characters, sprites, missing] = await Promise.all([
         loadSettings(userId),
-        spindle.connections.list(userId).catch(() => []),
-        listAll((o) => spindle.characters.list({ limit: 200, offset: o, userId }), 200).catch(() => [])
+        spindle.connections.list(userId).catch((e) => {
+          errors.push(`Connections: ${e?.message || e}`);
+          return [];
+        }),
+        listAll((o) => spindle.characters.list({ limit: 200, offset: o, userId }), 200).catch((e) => {
+          errors.push(`Characters: ${e?.message || e}`);
+          return [];
+        }),
+        loadSprites(userId),
+        missingPermissions()
       ]);
+      if (errors.length)
+        spindle.log.warn(`Lumiwrap init: ${errors.join(" | ")}`);
       send(userId, {
         type: "init_data",
         settings,
+        sprites,
+        missing,
+        errors,
         connections: connections.map((c) => ({ id: c.id, name: c.name || c.id, provider: c.provider, model: c.model, isDefault: c.is_default })),
         characters: characters.map((c) => ({ id: c.id, name: c.name, avatar: c.avatar_url || null })).sort((a, b) => a.name.localeCompare(b.name))
       });
@@ -1151,16 +1206,39 @@ async function handle(payload, userId) {
       await saveWrap(wrap, userId);
       return sendLibrary(userId);
     }
+    case "delete_all_wraps": {
+      const paths = await spindle.userStorage.list("wraps/", userId).catch(() => []);
+      for (const p of paths)
+        await spindle.userStorage.delete(String(p).startsWith("wraps/") ? String(p) : `wraps/${p}`, userId).catch(() => {});
+      spindle.toast.success("All Lumiwraps deleted.");
+      return sendLibrary(userId);
+    }
     case "delete_wrap": {
       await spindle.userStorage.delete(wrapPath(payload.id), userId).catch(() => {});
+      spindle.toast.success("Lumiwrap deleted.");
+      send(userId, { type: "wrap_deleted", id: payload.id });
       return sendLibrary(userId);
     }
     case "expose_estimate":
       return exposeEstimate(payload.wrapId, payload.chatId, userId);
     case "expose_run":
       return exposeRun(payload.wrapId, payload.chatId, userId);
-    case "now_playing":
-      return nowPlaying(userId);
+    case "save_sprite": {
+      const sprites = await loadSprites(userId);
+      const id = String(payload.hostId || "");
+      if (!["past", "present", "future"].includes(id))
+        return;
+      const data = typeof payload.dataUrl === "string" ? payload.dataUrl : "";
+      if (data && (!data.startsWith("data:image/") || data.length > 3000000))
+        throw new Error("That image is too big. Try one under 2 MB.");
+      if (data)
+        sprites[id] = data;
+      else
+        delete sprites[id];
+      await spindle.userStorage.setJson(SPRITES_PATH, sprites, { userId });
+      send(userId, { type: "sprites", sprites });
+      return;
+    }
   }
 }
 spindle.onFrontendMessage((payload, userId) => {

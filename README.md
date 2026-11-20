@@ -17,13 +17,13 @@ You choose what gets scanned, and you see the token cost before anything is sent
   - 😒 **Noelle** (Christmas Present): judges everything, is secretly into it.
   - 👻 **Vesper** (Christmas Future): ominous facts, secretly not nonchalant.
   - 🎁 **Any character** from your library, with an add-on prompt that keeps them in character.
-  - Each girl has an editable name, personality prompt, placeholder emoji, sprite image URL and accent color.
+  - Each girl has an editable name, personality prompt, emoji and accent color, and you can upload your own sprite image for her.
 - **Editable slides.** Turn slides on or off, reorder them, retitle them and rewrite each slide's prompt.
 - **The player.** Full-screen and phone-shaped, with Spotify-style progress bars, tap or arrow keys to move, hold to pause, snow, and a New Year countdown with fireworks at the end. Works on desktop and mobile.
 - **Summary card.** Save a 1080×1920 PNG of your year.
 - **Expose me.** Pick any chat the Wrapped mentions and the host roasts you for it. It shows the cost first, then adds a bonus slide to the saved Wrapped.
-- **Library.** Every Wrapped is saved. Replays are free.
-- **Spotify tie-in.** If Spotify Controls is installed, the player shows what's playing. If it isn't, put on your own songs.
+- **Library.** Every Wrapped is saved. Replays are free. Rename or delete them (tap the bin twice).
+- **Your connection, your samplers.** Pick any connection profile (your sidecar or a cheap model), set temperature, max tokens, top P, top K, min P and penalties, or turn off thinking for Lumiwrap calls.
 
 ## Install
 
@@ -41,6 +41,8 @@ The repo has to be public for Lumiverse to download it. Grant the permissions it
 - **app_manipulation**: the full-screen player. Without it, the player opens in a window instead.
 
 Point **Settings → Connection** at your sidecar or a cheap model to keep costs down.
+
+If the character list or the connection list is empty, Lumiwrap is probably missing a permission. It shows a banner telling you which one; grant it in Extensions and tap **try again**.
 
 ## Development
 

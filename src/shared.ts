@@ -82,8 +82,6 @@ export interface Host {
   title: string
   name: string
   emoji: string
-  /** Optional sprite image URL. Falls back to the emoji. */
-  sprite: string
   accent: string
   prompt: string
 }
@@ -105,7 +103,6 @@ export const DEFAULT_HOSTS: Host[] = [
     title: 'Christmas Past',
     name: 'Holly',
     emoji: '🎄',
-    sprite: '',
     accent: '#e7c46a',
     prompt: `You are {{host}}, the Ghost of Christmas Past, presenting {{user}}'s Lumiwrap: a Spotify Wrapped-style recap of their year of roleplay.
 
@@ -116,7 +113,6 @@ You're decked out like a Christmas tree: tinsel, baubles, fairy lights, a star i
     title: 'Christmas Present',
     name: 'Noelle',
     emoji: '😒',
-    sprite: '',
     accent: '#c8344f',
     prompt: `You are {{host}}, the Ghost of Christmas Present, presenting {{user}}'s Lumiwrap: a Spotify Wrapped-style recap of their year of roleplay.
 
@@ -127,7 +123,6 @@ You're an adult with full annoyed-teenager energy: eye rolls, smirks, resting un
     title: 'Christmas Future',
     name: 'Vesper',
     emoji: '👻',
-    sprite: '',
     accent: '#9fb4d8',
     prompt: `You are {{host}}, the Ghost of Christmas Yet to Come, presenting {{user}}'s Lumiwrap: a Spotify Wrapped-style recap of their year of roleplay.
 
@@ -180,7 +175,16 @@ export interface Settings {
   topCharCount: number
   chatsPerChar: number
   slideSeconds: number
-  showSpotify: boolean
+  /** Optional sampler overrides. null = use the connection's own setting. */
+  maxTokens: number | null
+  topP: number | null
+  topK: number | null
+  minP: number | null
+  frequencyPenalty: number | null
+  presencePenalty: number | null
+  repetitionPenalty: number | null
+  /** Ask the model not to think/reason first (cheaper, faster). */
+  noReasoning: boolean
   /** In Stats mode, let the host write her own lines (costs one small call). */
   statsCommentary: boolean
   characterHostPrompt: string
@@ -195,7 +199,14 @@ export const DEFAULT_SETTINGS: Settings = {
   topCharCount: 3,
   chatsPerChar: 2,
   slideSeconds: 8,
-  showSpotify: true,
+  maxTokens: null,
+  topP: null,
+  topK: null,
+  minP: null,
+  frequencyPenalty: null,
+  presencePenalty: null,
+  repetitionPenalty: null,
+  noReasoning: false,
   statsCommentary: false,
   characterHostPrompt: DEFAULT_CHARACTER_HOST_PROMPT,
   hosts: DEFAULT_HOSTS,
@@ -218,8 +229,26 @@ export function normalizeSettings(saved: Partial<Settings>): Settings {
   s.topCharCount = Math.round(clamp(Number(s.topCharCount), 1, 10, 3))
   s.chatsPerChar = Math.round(clamp(Number(s.chatsPerChar), 1, 10, 2))
   s.slideSeconds = Math.round(clamp(Number(s.slideSeconds), 3, 30, 8))
+  s.maxTokens = opt(s.maxTokens, 64, 32000, true)
+  s.topP = opt(s.topP, 0, 1)
+  s.topK = opt(s.topK, 0, 500, true)
+  s.minP = opt(s.minP, 0, 1)
+  s.frequencyPenalty = opt(s.frequencyPenalty, -2, 2)
+  s.presencePenalty = opt(s.presencePenalty, -2, 2)
+  s.repetitionPenalty = opt(s.repetitionPenalty, 0, 3)
+  s.noReasoning = !!s.noReasoning
+  s.hosts = s.hosts.map(h => ({ id: h.id, title: h.title, name: h.name, emoji: h.emoji, accent: h.accent, prompt: h.prompt }))
   s.characterHostPrompt = String(s.characterHostPrompt || '') || DEFAULT_CHARACTER_HOST_PROMPT
   return s
+}
+
+/** Optional number setting: blank/invalid becomes null. */
+function opt(v: unknown, lo: number, hi: number, int = false): number | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  if (!Number.isFinite(n)) return null
+  const c = Math.min(hi, Math.max(lo, n))
+  return int ? Math.round(c) : c
 }
 
 function clamp(n: number, lo: number, hi: number, fallback: number) {

@@ -5,9 +5,9 @@ import { fmt, hourLabel, MONTHS, WEEKDAYS, type RenderedSlide, type Wrap } from 
 
 export interface PlayerOptions {
   slideSeconds: number
-  showSpotify: boolean
+  /** Uploaded sprite for built-in hosts (data URL). */
+  sprite?: string
   onExpose: (chatId: string) => void
-  onNowPlaying: () => void
   onClose?: () => void
   startAt?: number
 }
@@ -15,7 +15,6 @@ export interface PlayerOptions {
 export interface PlayerHandle {
   close(): void
   updateWrap(wrap: Wrap, jumpTo?: number): void
-  setNowPlaying(text: string | null): void
   setBusy(text: string): void
   /** An in-player confirm sheet, so host modals never end up hidden under the overlay. */
   ask(message: string, okLabel: string): Promise<boolean>
@@ -75,7 +74,6 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
   let lastTick = 0
   let raf = 0
   let typeTimer: ReturnType<typeof setInterval> | null = null
-  let npTimer: ReturnType<typeof setInterval> | null = null
   let closed = false
   let cardUrl = ''
 
@@ -108,7 +106,7 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
         <div class="lw-bars" data-p="bars"></div>
         <div class="lw-topbar">
           <div class="lw-brand">✦ Lumiwrap <span data-p="year"></span></div>
-          <div class="lw-np" data-p="np" hidden></div>
+          <div class="lw-spacer"></div>
           <button class="lw-x" data-p="pause" aria-label="Pause">❚❚</button>
           <button class="lw-x" data-p="close" aria-label="Close">✕</button>
         </div>
@@ -130,7 +128,6 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     stage: $('stage'),
     bars: $('bars'),
     year: $('year'),
-    np: $('np'),
     pause: $('pause'),
     close: $('close'),
     slide: $('slide'),
@@ -158,8 +155,9 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     const h = wrap.host
     el.stage.style.setProperty('--lw-accent', h.accent || '#e7c46a')
     el.hname.textContent = h.name
-    el.sprite.innerHTML = h.sprite
-      ? `<img src="${esc(h.sprite)}" alt="${esc(h.name)}">`
+    const sprite = h.kind === 'builtin' ? opts.sprite || '' : h.sprite
+    el.sprite.innerHTML = sprite
+      ? `<img src="${esc(sprite)}" alt="${esc(h.name)}">`
       : `<span>${esc(h.emoji || '🎄')}</span>`
     el.year.textContent = String(wrap.year)
   }
@@ -570,7 +568,6 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     cancelAnimationFrame(raf)
     countdownTimers.forEach(clearTimeout)
     if (typeTimer) clearInterval(typeTimer)
-    if (npTimer) clearInterval(npTimer)
     document.removeEventListener('keydown', onKey)
     try {
       mount?.destroy()
@@ -578,11 +575,6 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
       /* already gone */
     }
     opts.onClose?.()
-  }
-
-  if (opts.showSpotify) {
-    opts.onNowPlaying()
-    npTimer = setInterval(() => opts.onNowPlaying(), 20_000)
   }
 
   renderHost()
@@ -597,10 +589,6 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
       renderHost()
       show(jumpTo ?? Math.min(index, wrap.slides.length - 1))
       setPaused(false)
-    },
-    setNowPlaying(text) {
-      el.np.hidden = !text
-      el.np.textContent = text ? `♫ ${text}` : ''
     },
     ask(message, okLabel) {
       setPaused(true)

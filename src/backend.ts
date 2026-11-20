@@ -126,6 +126,21 @@ async function countText(text: string, opts: any): Promise<{ n: number; approxim
   }
 }
 
+function samplerParams(settings: Settings, temperature: number) {
+  const p: Record<string, number> = { temperature }
+  const set = (key: string, v: number | null) => {
+    if (v !== null && v !== undefined) p[key] = v
+  }
+  set('max_tokens', settings.maxTokens)
+  set('top_p', settings.topP)
+  set('top_k', settings.topK)
+  set('min_p', settings.minP)
+  set('frequency_penalty', settings.frequencyPenalty)
+  set('presence_penalty', settings.presencePenalty)
+  set('repetition_penalty', settings.repetitionPenalty)
+  return p
+}
+
 async function llm(userId: string, settings: Settings, system: string, prompt: string, temperature: number): Promise<string> {
   const input: any = {
     type: 'quiet',
@@ -133,10 +148,11 @@ async function llm(userId: string, settings: Settings, system: string, prompt: s
       { role: 'system', content: system },
       { role: 'user', content: prompt },
     ],
-    parameters: { temperature },
+    parameters: samplerParams(settings, temperature),
     userId,
   }
   if (settings.connectionId) input.connection_id = settings.connectionId
+  if (settings.noReasoning) input.reasoning = { source: 'off' }
   let full = ''
   for await (const chunk of spindle.generate.quietStream(input)) {
     const c: any = chunk
@@ -181,7 +197,7 @@ async function resolveHost(hostRef: string, settings: Settings, userId: string):
   }
   const h: Host = settings.hosts.find(x => x.id === hostRef) || settings.hosts[0]
   return {
-    host: { kind: 'builtin', id: h.id, name: h.name, emoji: h.emoji, sprite: h.sprite, accent: h.accent, avatar: null },
+    host: { kind: 'builtin', id: h.id, name: h.name, emoji: h.emoji, sprite: '', accent: h.accent, avatar: null },
     prompt: h.prompt,
     card: '',
   }
@@ -653,16 +669,21 @@ async function sendLibrary(userId: string) {
   send(userId, { type: 'library', wraps: out })
 }
 
-// ---------- spotify tie-in ----------
+// ---------- sprites ----------
 
-async function nowPlaying(userId: string) {
+const SPRITES_PATH = 'sprites.json'
+const REQUIRED = ['generation', 'characters', 'chats', 'chat_mutation', 'personas']
+
+async function loadSprites(userId: string): Promise<Record<string, string>> {
+  return spindle.userStorage.getJson<Record<string, string>>(SPRITES_PATH, { fallback: {}, userId }).catch(() => ({}))
+}
+
+async function missingPermissions(): Promise<string[]> {
   try {
-    const { text } = await spindle.macros.resolve('{{spotify_now_playing}}', { userId, commit: false })
-    const t = (text || '').trim()
-    if (!t || t.includes('{{') || /^nothing playing$/i.test(t)) return send(userId, { type: 'now_playing', text: null })
-    send(userId, { type: 'now_playing', text: t.slice(0, 120) })
+    const granted = new Set(await spindle.permissions.getGranted())
+    return REQUIRED.filter(p => !granted.has(p))
   } catch {
-    send(userId, { type: 'now_playing', text: null })
+    return REQUIRED.filter(p => !spindle.permissions.has(p))
   }
 }
 
@@ -671,14 +692,27 @@ async function nowPlaying(userId: string) {
 async function handle(payload: any, userId: string) {
   switch (payload?.type) {
     case 'init': {
-      const [settings, connections, characters] = await Promise.all([
+      const errors: string[] = []
+      const [settings, connections, characters, sprites, missing] = await Promise.all([
         loadSettings(userId),
-        spindle.connections.list(userId).catch(() => []),
-        listAll(o => spindle.characters.list({ limit: 200, offset: o, userId }), 200).catch(() => []),
+        spindle.connections.list(userId).catch((e: any) => {
+          errors.push(`Connections: ${e?.message || e}`)
+          return []
+        }),
+        listAll(o => spindle.characters.list({ limit: 200, offset: o, userId }), 200).catch((e: any) => {
+          errors.push(`Characters: ${e?.message || e}`)
+          return []
+        }),
+        loadSprites(userId),
+        missingPermissions(),
       ])
+      if (errors.length) spindle.log.warn(`Lumiwrap init: ${errors.join(' | ')}`)
       send(userId, {
         type: 'init_data',
         settings,
+        sprites,
+        missing,
+        errors,
         connections: connections.map(c => ({ id: c.id, name: c.name || c.id, provider: c.provider, model: c.model, isDefault: c.is_default })),
         characters: characters.map(c => ({ id: c.id, name: c.name, avatar: c.avatar_url || null })).sort((a, b) => a.name.localeCompare(b.name)),
       })
@@ -739,16 +773,34 @@ async function handle(payload: any, userId: string) {
       await saveWrap(wrap, userId)
       return sendLibrary(userId)
     }
+    case 'delete_all_wraps': {
+      const paths = await spindle.userStorage.list('wraps/', userId).catch(() => [] as string[])
+      for (const p of paths) await spindle.userStorage.delete(String(p).startsWith('wraps/') ? String(p) : `wraps/${p}`, userId).catch(() => {})
+      spindle.toast.success('All Lumiwraps deleted.')
+      return sendLibrary(userId)
+    }
     case 'delete_wrap': {
       await spindle.userStorage.delete(wrapPath(payload.id), userId).catch(() => {})
+      spindle.toast.success('Lumiwrap deleted.')
+      send(userId, { type: 'wrap_deleted', id: payload.id })
       return sendLibrary(userId)
     }
     case 'expose_estimate':
       return exposeEstimate(payload.wrapId, payload.chatId, userId)
     case 'expose_run':
       return exposeRun(payload.wrapId, payload.chatId, userId)
-    case 'now_playing':
-      return nowPlaying(userId)
+    case 'save_sprite': {
+      const sprites = await loadSprites(userId)
+      const id = String(payload.hostId || '')
+      if (!['past', 'present', 'future'].includes(id)) return
+      const data = typeof payload.dataUrl === 'string' ? payload.dataUrl : ''
+      if (data && (!data.startsWith('data:image/') || data.length > 3_000_000)) throw new Error('That image is too big. Try one under 2 MB.')
+      if (data) sprites[id] = data
+      else delete sprites[id]
+      await spindle.userStorage.setJson(SPRITES_PATH, sprites, { userId })
+      send(userId, { type: 'sprites', sprites })
+      return
+    }
   }
 }
 

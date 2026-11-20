@@ -6,6 +6,7 @@ import {
   fmt,
   type Depth,
   type Estimate,
+  type Host,
   type PickedChat,
   type Scope,
   type Settings,
@@ -19,15 +20,32 @@ import { esc, openPlayer, type PlayerHandle } from './player'
 
 const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="9" width="17" height="11.5" rx="1.6"/><path d="M2.5 9h19V6.8a.8.8 0 0 0-.8-.8H3.3a.8.8 0 0 0-.8.8z"/><path d="M12 6v14.5"/><path d="M12 6c-1.2-2.6-4.6-3.4-5.2-1.6C6.2 6.2 9.6 6.4 12 6zM12 6c1.2-2.6 4.6-3.4 5.2-1.6.6 1.8-2.8 2-5.2 1.6z"/></svg>`
 
+const GIFT = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="9.5" width="17" height="11" rx="1.6" fill="currentColor"/><rect x="2.5" y="6.5" width="19" height="3.6" rx=".9" fill="currentColor" opacity=".85"/><rect x="10.6" y="6.5" width="2.8" height="14" fill="#f3d27a"/><path d="M12 6.6c-1.3-2.7-4.8-3.5-5.4-1.6-.6 1.9 3 2.1 5.4 1.6zM12 6.6c1.3-2.7 4.8-3.5 5.4-1.6.6 1.9-3 2.1-5.4 1.6z" fill="#f3d27a"/></svg>`
+
+const SNOWFLAKE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2v20M3.3 7l17.4 10M3.3 17 20.7 7"/><path d="m9.5 3.5 2.5 2 2.5-2M9.5 20.5l2.5-2 2.5 2M4 10.2l3-.6-1-2.9M20 13.8l-3 .6 1 2.9M4 13.8l3 .6-1 2.9M20 10.2l-3-.6 1-2.9"/></svg>`
+const PLAY = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>`
+const TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.8h6V7M6.5 7l.9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3L17.5 7"/></svg>`
+const PENCIL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
+const UPLOAD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4.5 15v3.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>`
+
 type View = 'wrap' | 'library' | 'slides' | 'hosts' | 'settings'
 
-const DEPTH_INFO: Record<Depth, { label: string; hint: string }> = {
-  stats: { label: 'Stats', hint: 'Counts everything on your machine. 0 tokens with built-in host lines.' },
-  highlights: { label: 'Highlights + stats', hint: 'Adds a small sample from your top chats so the host can quote you. One small call.' },
-  deep: { label: 'Deep + everything', hint: 'Adds a summary of each picked chat. Costs the most; summaries are cached for next time.' },
-}
+const DEPTHS: Array<{ id: Depth; icon: string; label: string; hint: string; cost: string }> = [
+  { id: 'stats', icon: '❄️', label: 'Stats', hint: 'Counts everything on your machine. Nothing is sent to a model.', cost: 'Free' },
+  { id: 'highlights', icon: '✨', label: 'Highlights + stats', hint: 'A small sample from your top chats, so the host can quote you.', cost: 'Small' },
+  { id: 'deep', icon: '🔍', label: 'Deep + everything', hint: 'Summarizes each picked chat. Summaries are cached for next time.', cost: 'Most' },
+]
 
 const NEEDS_LABEL: Record<Depth, string> = { stats: 'Stats', highlights: 'Highlights+', deep: 'Deep' }
+const DEPTH_LABEL: Record<Depth, string> = { stats: 'Stats', highlights: 'Highlights', deep: 'Deep' }
+
+const PERMISSION_LABEL: Record<string, string> = {
+  generation: 'Generation (connections and host lines)',
+  characters: 'Characters',
+  chats: 'Chats',
+  chat_mutation: 'Chat mutation (reading messages; Lumiwrap never edits them)',
+  personas: 'Personas',
+}
 
 function timeAgo(ts: number) {
   const s = Math.max(0, (Date.now() - ts) / 1000)
@@ -35,6 +53,33 @@ function timeAgo(ts: number) {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
   return new Date(ts).toLocaleDateString()
+}
+
+/** Shrink an uploaded image so it stores comfortably. */
+function readImage(file: File, maxSide = 720): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) return reject(new Error('Pick an image file.'))
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error("Couldn't read that file."))
+    reader.onload = () => {
+      const img = new Image()
+      img.onerror = () => reject(new Error("Couldn't open that image."))
+      img.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
+        const w = Math.max(1, Math.round(img.width * scale))
+        const h = Math.max(1, Math.round(img.height * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
+        let url = canvas.toDataURL('image/webp', 0.88)
+        if (!url.startsWith('data:image/webp')) url = canvas.toDataURL('image/png')
+        resolve(url)
+      }
+      img.src = String(reader.result)
+    }
+    reader.readAsDataURL(file)
+  })
 }
 
 export function setup(ctx: SpindleFrontendContext) {
@@ -45,7 +90,7 @@ export function setup(ctx: SpindleFrontendContext) {
     title: 'Lumiwrap',
     shortName: 'Wrap',
     description: 'Your year in Lumiverse, wrapped',
-    keywords: ['wrapped', 'recap', 'year', 'stats', 'christmas', 'new year', 'spotify'],
+    keywords: ['wrapped', 'recap', 'year', 'stats', 'christmas', 'new year'],
     iconSvg: ICON,
   })
 
@@ -55,8 +100,8 @@ export function setup(ctx: SpindleFrontendContext) {
   root.innerHTML = `
     <div class="lw">
       <header class="lw-head">
-        <span class="lw-logo">🎁</span>
-        <div>
+        <span class="lw-logo">${GIFT}</span>
+        <div class="lw-head-text">
           <div class="lw-title">Lumiwrap</div>
           <div class="lw-tagline">your year, wrapped with a bow</div>
         </div>
@@ -70,41 +115,52 @@ export function setup(ctx: SpindleFrontendContext) {
         <button data-view="settings">Settings</button>
       </nav>
 
+      <div class="lw-banner" data-el="banner" hidden></div>
+
       <section data-panel="wrap">
         <div class="lw-card">
-          <div class="lw-grid2">
-            <label class="lw-field"><span>Year</span><input data-el="year" type="number" min="2020" max="2100" value="${thisYear}"></label>
-            <label class="lw-field"><span>Wrap</span>
-              <select data-el="scope"><option value="all">Everything</option><option value="character">One character</option></select>
-            </label>
+          <div class="lw-step"><span class="lw-ornament">1</span>Your year</div>
+          <div class="lw-yearrow">
+            <button class="lw-round" data-el="year-down" aria-label="Previous year">‹</button>
+            <input data-el="year" class="lw-year" type="number" min="2020" max="2100" value="${thisYear}" aria-label="Year">
+            <button class="lw-round" data-el="year-up" aria-label="Next year">›</button>
+          </div>
+          <div class="lw-seg" data-el="scope">
+            <button data-scope="all" class="on">Everything</button>
+            <button data-scope="character">One character</button>
           </div>
           <label class="lw-field" data-el="char-wrap" hidden><span>Character</span><select data-el="char"></select></label>
         </div>
 
         <div class="lw-card">
-          <div class="lw-card-title">How much to read</div>
-          ${(['stats', 'highlights', 'deep'] as Depth[])
-            .map(
-              d => `<label class="lw-radio"><input type="radio" name="lw-depth" value="${d}"${d === 'stats' ? ' checked' : ''}> ${DEPTH_INFO[d].label}<small>${DEPTH_INFO[d].hint}</small></label>`,
-            )
-            .join('')}
+          <div class="lw-step"><span class="lw-ornament">2</span>How much to read</div>
+          <div class="lw-depths" data-el="depths">
+            ${DEPTHS.map(
+              d => `<button class="lw-depth${d.id === 'stats' ? ' on' : ''}" data-depth="${d.id}">
+                <span class="lw-depth-icon">${d.icon}</span>
+                <span class="lw-depth-text"><b>${d.label}</b><small>${d.hint}</small></span>
+                <span class="lw-tag lw-tag-${d.id}">${d.cost}</span>
+              </button>`,
+            ).join('')}
+          </div>
         </div>
 
         <div class="lw-card">
-          <div class="lw-card-title">Who reads it to you</div>
+          <div class="lw-step"><span class="lw-ornament">3</span>Who reads it to you</div>
           <div class="lw-hosts" data-el="hosts"></div>
           <label class="lw-field" data-el="hostchar-wrap" hidden><span>Character host</span><select data-el="hostchar"></select></label>
         </div>
 
-        <button class="lw-primary" data-el="scan">❄️ <span>Scan my year</span></button>
+        <button class="lw-primary" data-el="scan">${SNOWFLAKE}<span>Scan my year</span></button>
         <div class="lw-progress" data-el="progress" hidden><div class="lw-progress-text" data-el="progress-text"></div><div class="lw-progress-bar"><i data-el="progress-bar"></i></div></div>
         <div class="lw-status" data-el="status"></div>
 
-        <div class="lw-card lw-result" data-el="result" hidden>
-          <div class="lw-card-title">Found</div>
+        <div class="lw-tagcard" data-el="result" hidden>
+          <div class="lw-tag-hole"></div>
+          <div class="lw-tag-title">To: you · From: ${'<span data-el="from"></span>'}</div>
           <div class="lw-found" data-el="found"></div>
           <div data-el="picked-wrap">
-            <div class="lw-card-title lw-mt">Chats it will read <small data-el="picked-hint"></small></div>
+            <div class="lw-sublabel">Chats it will read <small data-el="picked-hint"></small></div>
             <div class="lw-picked" data-el="picked"></div>
           </div>
           <label class="lw-check" data-el="commentary-wrap"><input type="checkbox" data-el="commentary"> Let the host write her own lines (one small call)</label>
@@ -112,32 +168,29 @@ export function setup(ctx: SpindleFrontendContext) {
             <div class="lw-cost-big" data-el="cost-big">–</div>
             <div class="lw-hint" data-el="cost-detail"></div>
           </div>
-          <button class="lw-primary" data-el="go">🎁 <span>Wrap it!</span></button>
+          <button class="lw-primary" data-el="go">${GIFT}<span>Wrap it!</span></button>
         </div>
       </section>
 
       <section data-panel="library" hidden>
-        <div class="lw-card">
-          <div class="lw-card-title">Your Lumiwraps</div>
-          <p class="lw-hint">Replays are free. Open one and use Expose me on any chat it mentions.</p>
-          <div class="lw-lib" data-el="lib"></div>
-        </div>
+        <div class="lw-lib" data-el="lib"></div>
+        <button class="lw-danger" data-el="delete-all" hidden>Delete every Lumiwrap</button>
       </section>
 
       <section data-panel="slides" hidden>
         <div class="lw-card">
           <div class="lw-card-title">Slides</div>
-          <p class="lw-hint">Turn slides on or off, reorder them, and rewrite what the host is told for each one. Prompts are only used when the host writes her own lines. Macros: <code>{{user}}</code> <code>{{year}}</code> <code>{{nextYear}}</code> <code>{{top1}}</code> <code>{{words}}</code> and more.</p>
+          <p class="lw-hint">Switch slides on or off, reorder them, and rewrite what the host is told for each one. Prompts are only used when the host writes her own lines. Macros: <code>{{user}}</code> <code>{{year}}</code> <code>{{nextYear}}</code> <code>{{top1}}</code> <code>{{words}}</code> and more.</p>
           <div class="lw-slides" data-el="slides"></div>
-          <div class="lw-row">
-            <button class="lw-primary lw-slim lw-grow" data-el="slides-save">Save slides</button>
-            <button class="lw-ghost" data-el="slides-reset">Reset</button>
-          </div>
+        </div>
+        <div class="lw-row">
+          <button class="lw-primary lw-slim lw-grow" data-el="slides-save">Save slides</button>
+          <button class="lw-ghost" data-el="slides-reset">Reset</button>
         </div>
       </section>
 
       <section data-panel="hosts" hidden>
-        <div data-el="host-editors"></div>
+        <div class="lw-host-eds" data-el="host-editors"></div>
         <div class="lw-card">
           <div class="lw-card-title">Character host add-on</div>
           <p class="lw-hint">Added when a character from your library hosts, so they stay in character. Macros: <code>{{char}}</code> <code>{{user}}</code> <code>{{year}}</code>.</p>
@@ -147,29 +200,46 @@ export function setup(ctx: SpindleFrontendContext) {
           <button class="lw-primary lw-slim lw-grow" data-el="hosts-save">Save hosts</button>
           <button class="lw-ghost" data-el="hosts-reset">Reset all</button>
         </div>
+        <div class="lw-status" data-el="hosts-status"></div>
+        <input type="file" accept="image/*" data-el="file" hidden>
       </section>
 
       <section data-panel="settings" hidden>
         <div class="lw-card">
-          <label class="lw-field"><span>Connection</span><select data-el="s-conn"></select></label>
-          <p class="lw-hint">Point this at your sidecar or a cheap model to keep costs down.</p>
+          <div class="lw-card-title">Connection</div>
+          <div class="lw-conn-row">
+            <select data-el="s-conn"></select>
+            <button class="lw-round" data-el="s-refresh" title="Reload connections" aria-label="Reload connections">↻</button>
+          </div>
+          <p class="lw-hint" data-el="s-conn-hint">Point this at your sidecar or a cheap model to keep costs down.</p>
+          <label class="lw-check"><input data-el="s-noreason" type="checkbox"> Turn off thinking for Lumiwrap calls (cheaper and faster)</label>
+        </div>
+
+        <div class="lw-card">
+          <div class="lw-card-title">Samplers</div>
+          <p class="lw-hint">Leave a box empty to use your connection's own setting.</p>
           <div class="lw-grid2">
             <label class="lw-field"><span>Temperature</span><input data-el="s-temp" type="number" min="0" max="2" step="0.05"></label>
-            <label class="lw-field"><span>Seconds per slide</span><input data-el="s-secs" type="number" min="3" max="30"></label>
+            <label class="lw-field"><span>Max tokens</span><input data-el="s-max" type="number" min="64" max="32000" step="1" placeholder="default"></label>
+            <label class="lw-field"><span>Top P</span><input data-el="s-topp" type="number" min="0" max="1" step="0.01" placeholder="default"></label>
+            <label class="lw-field"><span>Top K</span><input data-el="s-topk" type="number" min="0" max="500" step="1" placeholder="default"></label>
+            <label class="lw-field"><span>Min P</span><input data-el="s-minp" type="number" min="0" max="1" step="0.01" placeholder="default"></label>
+            <label class="lw-field"><span>Repetition penalty</span><input data-el="s-rep" type="number" min="0" max="3" step="0.01" placeholder="default"></label>
+            <label class="lw-field"><span>Frequency penalty</span><input data-el="s-freq" type="number" min="-2" max="2" step="0.01" placeholder="default"></label>
+            <label class="lw-field"><span>Presence penalty</span><input data-el="s-pres" type="number" min="-2" max="2" step="0.01" placeholder="default"></label>
           </div>
         </div>
+
         <div class="lw-card">
           <div class="lw-card-title">What gets picked</div>
           <p class="lw-hint">Highlights and Deep read the characters with the most chats, then each one's chats with the most messages.</p>
           <div class="lw-grid2">
             <label class="lw-field"><span>Top characters</span><input data-el="s-topchars" type="number" min="1" max="10"></label>
             <label class="lw-field"><span>Chats per character</span><input data-el="s-perchar" type="number" min="1" max="10"></label>
+            <label class="lw-field"><span>Messages per sample</span><input data-el="s-sample" type="number" min="4" max="60"></label>
+            <label class="lw-field"><span>Seconds per slide</span><input data-el="s-secs" type="number" min="3" max="30"></label>
           </div>
-          <label class="lw-field"><span>Messages sampled per chat (Highlights)</span><input data-el="s-sample" type="number" min="4" max="60"></label>
-        </div>
-        <div class="lw-card">
           <label class="lw-check"><input data-el="s-commentary" type="checkbox"> In Stats mode, let the host write her own lines</label>
-          <label class="lw-check"><input data-el="s-spotify" type="checkbox"> Show what's playing on Spotify (needs Spotify Controls)</label>
         </div>
         <button class="lw-primary lw-slim" data-el="s-save">Save settings</button>
       </section>
@@ -178,10 +248,14 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const $ = <T extends HTMLElement = HTMLElement>(name: string) => root.querySelector(`[data-el="${name}"]`) as T
   const el = {
+    banner: $('banner'),
     year: $<HTMLInputElement>('year'),
-    scope: $<HTMLSelectElement>('scope'),
+    yearDown: $<HTMLButtonElement>('year-down'),
+    yearUp: $<HTMLButtonElement>('year-up'),
+    scope: $('scope'),
     charWrap: $('char-wrap'),
     char: $<HTMLSelectElement>('char'),
+    depths: $('depths'),
     hosts: $('hosts'),
     hostcharWrap: $('hostchar-wrap'),
     hostchar: $<HTMLSelectElement>('hostchar'),
@@ -191,6 +265,7 @@ export function setup(ctx: SpindleFrontendContext) {
     progressBar: $('progress-bar'),
     status: $('status'),
     result: $('result'),
+    from: $('from'),
     found: $('found'),
     pickedWrap: $('picked-wrap'),
     pickedHint: $('picked-hint'),
@@ -201,6 +276,7 @@ export function setup(ctx: SpindleFrontendContext) {
     costDetail: $('cost-detail'),
     go: $<HTMLButtonElement>('go'),
     lib: $('lib'),
+    deleteAll: $<HTMLButtonElement>('delete-all'),
     slides: $('slides'),
     slidesSave: $<HTMLButtonElement>('slides-save'),
     slidesReset: $<HTMLButtonElement>('slides-reset'),
@@ -208,21 +284,37 @@ export function setup(ctx: SpindleFrontendContext) {
     charprompt: $<HTMLTextAreaElement>('charprompt'),
     hostsSave: $<HTMLButtonElement>('hosts-save'),
     hostsReset: $<HTMLButtonElement>('hosts-reset'),
+    file: $<HTMLInputElement>('file'),
+    hostsStatus: $('hosts-status'),
     sConn: $<HTMLSelectElement>('s-conn'),
+    sRefresh: $<HTMLButtonElement>('s-refresh'),
+    sConnHint: $('s-conn-hint'),
+    sNoReason: $<HTMLInputElement>('s-noreason'),
     sTemp: $<HTMLInputElement>('s-temp'),
-    sSecs: $<HTMLInputElement>('s-secs'),
+    sMax: $<HTMLInputElement>('s-max'),
+    sTopP: $<HTMLInputElement>('s-topp'),
+    sTopK: $<HTMLInputElement>('s-topk'),
+    sMinP: $<HTMLInputElement>('s-minp'),
+    sRep: $<HTMLInputElement>('s-rep'),
+    sFreq: $<HTMLInputElement>('s-freq'),
+    sPres: $<HTMLInputElement>('s-pres'),
     sTopchars: $<HTMLInputElement>('s-topchars'),
     sPerchar: $<HTMLInputElement>('s-perchar'),
     sSample: $<HTMLInputElement>('s-sample'),
+    sSecs: $<HTMLInputElement>('s-secs'),
     sCommentary: $<HTMLInputElement>('s-commentary'),
-    sSpotify: $<HTMLInputElement>('s-spotify'),
     sSave: $<HTMLButtonElement>('s-save'),
   }
-  const depthRadios = Array.from(root.querySelectorAll<HTMLInputElement>('input[name="lw-depth"]'))
 
   // ---------- state ----------
   let settings: Settings | null = null
   let characters: Array<{ id: string; name: string; avatar: string | null }> = []
+  let connections: Array<{ id: string; name: string; provider: string; model: string; isDefault: boolean }> = []
+  let sprites: Record<string, string> = {}
+  let initErrors: string[] = []
+  let missing: string[] = []
+  let scope: Scope = 'all'
+  let depth: Depth = 'stats'
   let hostRef = 'past'
   let busy = ''
   let scan: { scanId: string; stats: WrapStats; picked: PickedChat[]; depth: Depth; estimate: Estimate } | null = null
@@ -232,24 +324,80 @@ export function setup(ctx: SpindleFrontendContext) {
   let player: PlayerHandle | null = null
   let playerWrapId = ''
   let pendingExpose: { wrapId: string; chatId: string } | null = null
+  let uploadFor = ''
+  let view: View = 'wrap'
+  const armed = new Map<string, ReturnType<typeof setTimeout>>() // two-tap delete
 
-  const depth = (): Depth => (depthRadios.find(r => r.checked)?.value as Depth) || 'stats'
+  // ---------- helpers ----------
+  const hostArt = (h: Host) => (sprites[h.id] ? `<img src="${esc(sprites[h.id])}" alt="">` : `<span>${esc(h.emoji)}</span>`)
+
+  /** First tap arms the button, second tap within 3s confirms. */
+  function twoTap(btn: HTMLElement, key: string, armedLabel: string, action: () => void) {
+    if (armed.has(key)) {
+      clearTimeout(armed.get(key)!)
+      armed.delete(key)
+      action()
+      return
+    }
+    const original = btn.innerHTML
+    btn.classList.add('armed')
+    btn.innerHTML = armedLabel
+    armed.set(
+      key,
+      setTimeout(() => {
+        armed.delete(key)
+        btn.classList.remove('armed')
+        btn.innerHTML = original
+      }, 3000),
+    )
+  }
+
+  function hostsStatus(text: string) {
+    el.hostsStatus.textContent = text
+    el.hostsStatus.className = `lw-status ${text ? 'error' : ''}`
+  }
 
   // ---------- rendering ----------
   function setView(v: View) {
+    view = v
     root.querySelectorAll<HTMLButtonElement>('.lw-nav button').forEach(b => b.classList.toggle('active', b.dataset.view === v))
     root.querySelectorAll<HTMLElement>('[data-panel]').forEach(p => (p.hidden = p.dataset.panel !== v))
     if (v === 'library') ctx.sendToBackend({ type: 'list_wraps' })
   }
 
+  function renderBanner() {
+    if (!missing.length && !initErrors.length) {
+      el.banner.hidden = true
+      return
+    }
+    el.banner.hidden = false
+    el.banner.innerHTML = missing.length
+      ? `<b>Lumiwrap is missing some permissions.</b>
+         <p>Open <b>Extensions</b>, find Lumiwrap and grant:</p>
+         <ul>${missing.map(p => `<li>${esc(PERMISSION_LABEL[p] || p)}</li>`).join('')}</ul>
+         <button class="lw-ghost lw-small" data-retry>I granted them, try again</button>`
+      : `<b>Something didn't load.</b><p>${initErrors.map(esc).join('<br>')}</p><button class="lw-ghost lw-small" data-retry>Try again</button>`
+  }
+
   function renderCharacterSelects() {
+    const empty = missing.includes('characters') ? 'Grant the Characters permission first' : 'No characters found'
     const opts = characters.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
     const keepChar = el.char.value
     const keepHost = el.hostchar.value
-    el.char.innerHTML = opts || `<option value="">No characters yet</option>`
-    el.hostchar.innerHTML = opts || `<option value="">No characters yet</option>`
-    if (keepChar) el.char.value = keepChar
-    if (keepHost) el.hostchar.value = keepHost
+    el.char.innerHTML = opts || `<option value="">${empty}</option>`
+    el.hostchar.innerHTML = opts || `<option value="">${empty}</option>`
+    if (keepChar && characters.some(c => c.id === keepChar)) el.char.value = keepChar
+    if (keepHost && characters.some(c => c.id === keepHost)) el.hostchar.value = keepHost
+    if (hostRef.startsWith('char:')) hostRef = `char:${el.hostchar.value}`
+  }
+
+  function renderScope() {
+    el.scope.querySelectorAll<HTMLButtonElement>('[data-scope]').forEach(b => b.classList.toggle('on', b.dataset.scope === scope))
+    el.charWrap.hidden = scope !== 'character'
+  }
+
+  function renderDepth() {
+    el.depths.querySelectorAll<HTMLButtonElement>('[data-depth]').forEach(b => b.classList.toggle('on', b.dataset.depth === depth))
   }
 
   function renderHostPicker() {
@@ -258,18 +406,24 @@ export function setup(ctx: SpindleFrontendContext) {
       hosts
         .map(
           h => `<button class="lw-host-tile${hostRef === h.id ? ' on' : ''}" data-host="${h.id}" style="--tile:${esc(h.accent)}">
-            <span class="lw-tile-art">${h.sprite ? `<img src="${esc(h.sprite)}" alt="">` : esc(h.emoji)}</span>
+            <span class="lw-tile-art">${hostArt(h)}</span>
             <span class="lw-tile-name">${esc(h.name)}</span><span class="lw-tile-sub">${esc(h.title)}</span></button>`,
         )
         .join('') +
-      `<button class="lw-host-tile${hostRef.startsWith('char:') ? ' on' : ''}" data-host="char" style="--tile:#e7c46a">
-        <span class="lw-tile-art">🎁</span><span class="lw-tile-name">A character</span><span class="lw-tile-sub">from your library</span></button>`
+      `<button class="lw-host-tile${hostRef.startsWith('char:') ? ' on' : ''}" data-host="char" style="--tile:#d9b45a">
+        <span class="lw-tile-art"><span>🎁</span></span><span class="lw-tile-name">A character</span><span class="lw-tile-sub">from your library</span></button>`
     el.hostcharWrap.hidden = !hostRef.startsWith('char:')
   }
 
   function currentHostRef() {
     if (hostRef.startsWith('char:')) return el.hostchar.value ? `char:${el.hostchar.value}` : ''
     return hostRef
+  }
+
+  function hostName() {
+    const ref = currentHostRef()
+    if (ref.startsWith('char:')) return characters.find(c => `char:${c.id}` === ref)?.name || 'a character'
+    return (settings?.hosts || DEFAULT_HOSTS).find(h => h.id === ref)?.name || 'Holly'
   }
 
   function setProgress(text: string, done = 0, total = 0) {
@@ -289,6 +443,8 @@ export function setup(ctx: SpindleFrontendContext) {
     el.go.disabled = !!busy || !scan
     el.scan.querySelector('span')!.textContent = busy === 'scan' ? 'Scanning...' : scan ? 'Scan again' : 'Scan my year'
     el.go.querySelector('span')!.textContent = busy === 'wrap' ? 'Wrapping...' : 'Wrap it!'
+    el.scan.classList.toggle('loading', busy === 'scan')
+    el.go.classList.toggle('loading', busy === 'wrap')
   }
 
   function invalidateScan(reason?: string) {
@@ -305,24 +461,31 @@ export function setup(ctx: SpindleFrontendContext) {
       return
     }
     el.result.hidden = false
+    el.from.textContent = hostName()
     const t = scan.stats.totals
-    el.found.innerHTML = `<b>${fmt(t.messages)}</b> messages · <b>${fmt(t.chats)}</b> chats · <b>${fmt(t.characters)}</b> characters in ${scan.stats.year}${scan.stats.scope === 'character' ? ` with ${esc(scan.stats.scopeName)}` : ''}`
+    el.found.innerHTML = `
+      <div class="lw-found-grid">
+        <div><b>${fmt(t.messages)}</b><small>messages</small></div>
+        <div><b>${fmt(t.chats)}</b><small>chats</small></div>
+        <div><b>${fmt(t.characters)}</b><small>characters</small></div>
+      </div>
+      <div class="lw-hint">in ${scan.stats.year}${scan.stats.scope === 'character' ? ` with ${esc(scan.stats.scopeName)}` : ''}</div>`
 
     el.pickedWrap.hidden = scan.depth === 'stats'
-    el.pickedHint.textContent = scan.depth === 'deep' ? '(tokens to read each one)' : '(tokens for each sample)'
+    el.pickedHint.textContent = scan.depth === 'deep' ? '(tokens to read each)' : '(tokens per sample)'
     el.picked.innerHTML = scan.picked.length
       ? scan.picked
           .map(p => {
-            const cost = scan!.depth === 'deep' ? (p.deepCached ? 'cached · free' : `≈ ${fmt(p.chatTokens)}`) : `≈ ${fmt(p.sampleTokens)}`
+            const free = p.deepCached && scan!.depth === 'deep'
+            const cost = scan!.depth === 'deep' ? (free ? 'cached' : `≈ ${fmt(p.chatTokens)}`) : `≈ ${fmt(p.sampleTokens)}`
             return `<label class="lw-pick"><input type="checkbox" data-pick="${esc(p.id)}"${selected.has(p.id) ? ' checked' : ''}>
               <span class="lw-pick-text"><b>${esc(p.name)}</b><small>${esc(p.characterName)} · ${fmt(p.messages)} msgs</small></span>
-              <span class="lw-pick-cost${p.deepCached && scan!.depth === 'deep' ? ' free' : ''}">${cost}</span></label>`
+              <span class="lw-pick-cost${free ? ' free' : ''}">${cost}</span></label>`
           })
           .join('')
-      : `<div class="lw-hint">No chats to read.</div>`
+      : `<div class="lw-hint lw-pad">No chats to read.</div>`
 
-    const charHost = currentHostRef().startsWith('char:')
-    el.commentaryWrap.hidden = scan.depth !== 'stats' || charHost
+    el.commentaryWrap.hidden = scan.depth !== 'stats' || currentHostRef().startsWith('char:')
     el.commentary.checked = !!settings?.statsCommentary
     renderEstimate()
     renderBusy()
@@ -333,7 +496,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const e = scan.estimate
     if (e.free) {
       el.costBig.innerHTML = `Free <small>0 tokens</small>`
-      el.costDetail.textContent = 'Built-in host lines, nothing is sent to a model.'
+      el.costDetail.textContent = 'Built-in host lines. Nothing is sent to a model.'
       return
     }
     el.costBig.innerHTML = `≈ ${fmt(e.total)} <small>tokens</small>`
@@ -345,32 +508,42 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderLibrary() {
-    el.lib.innerHTML = library.length
-      ? library
-          .map(
-            w => `<div class="lw-libitem">
-              <span class="lw-lib-emoji">${esc(w.hostEmoji || '🎁')}</span>
-              <div class="lw-lib-text"><b>${esc(w.title)}</b><small>${esc(DEPTH_INFO[w.depth]?.label || w.depth)} · ${esc(timeAgo(w.createdAt))}</small></div>
-              <div class="lw-lib-actions">
-                <button class="lw-ghost lw-small" data-play="${esc(w.id)}">▶ Play</button>
-                <button class="lw-ghost lw-small" data-rename="${esc(w.id)}">Rename</button>
-                <button class="lw-ghost lw-small lw-ghost-danger" data-delete="${esc(w.id)}">Delete</button>
-              </div></div>`,
-          )
-          .join('')
-      : `<div class="lw-hint">No Lumiwraps yet. Scan your year to make one.</div>`
+    el.deleteAll.hidden = library.length < 2
+    if (!library.length) {
+      el.lib.innerHTML = `<div class="lw-empty">${GIFT}<p>No Lumiwraps yet.<br>Scan your year to make one.</p></div>`
+      return
+    }
+    const hosts = settings?.hosts || DEFAULT_HOSTS
+    el.lib.innerHTML = library
+      .map(w => {
+        const builtin = hosts.find(h => h.name === w.hostName)
+        const art = builtin && sprites[builtin.id] ? `<img src="${esc(sprites[builtin.id])}" alt="">` : `<span>${esc(w.hostEmoji || '🎁')}</span>`
+        return `<div class="lw-libitem">
+          <button class="lw-lib-main" data-play="${esc(w.id)}" title="Play">
+            <span class="lw-lib-art">${art}<i>${PLAY}</i></span>
+            <span class="lw-lib-text"><b>${esc(w.title)}</b><small>${esc(DEPTH_LABEL[w.depth] || w.depth)} · ${esc(timeAgo(w.createdAt))}</small></span>
+          </button>
+          <div class="lw-lib-actions">
+            <button class="lw-iconbtn" data-rename="${esc(w.id)}" title="Rename" aria-label="Rename">${PENCIL}</button>
+            <button class="lw-iconbtn lw-iconbtn-danger" data-delete="${esc(w.id)}" title="Delete" aria-label="Delete">${TRASH}</button>
+          </div>
+        </div>`
+      })
+      .join('')
   }
 
   function renderSlides() {
     el.slides.innerHTML = slidesDraft
       .map(
-        (s, i) => `<div class="lw-slide-row${s.enabled ? '' : ' off'}" data-i="${i}">
+        (s, i) => `<div class="lw-slide-row${s.enabled ? '' : ' off'}">
           <div class="lw-slide-head">
-            <label class="lw-switch"><input type="checkbox" data-toggle="${i}"${s.enabled ? ' checked' : ''}><i></i></label>
-            <input type="text" class="lw-slide-title" data-title="${i}" value="${esc(s.title)}" maxlength="60">
+            <label class="lw-switch" title="Show this slide"><input type="checkbox" data-toggle="${i}"${s.enabled ? ' checked' : ''}><i></i></label>
+            <input type="text" class="lw-slide-title" data-title="${i}" value="${esc(s.title)}" maxlength="60" aria-label="Slide title">
             <span class="lw-badge lw-badge-${s.needs}">${NEEDS_LABEL[s.needs]}</span>
-            <button class="lw-icon" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">▲</button>
-            <button class="lw-icon" data-down="${i}" ${i === slidesDraft.length - 1 ? 'disabled' : ''} aria-label="Move down">▼</button>
+            <span class="lw-move">
+              <button data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">▲</button>
+              <button data-down="${i}" ${i === slidesDraft.length - 1 ? 'disabled' : ''} aria-label="Move down">▼</button>
+            </span>
           </div>
           <details><summary>Prompt</summary><textarea rows="3" data-prompt="${i}">${esc(s.prompt)}</textarea></details>
         </div>`,
@@ -382,40 +555,67 @@ export function setup(ctx: SpindleFrontendContext) {
     const hosts = settings?.hosts || DEFAULT_HOSTS
     el.hostEditors.innerHTML = hosts
       .map(
-        h => `<div class="lw-card" data-host-editor="${h.id}" style="--tile:${esc(h.accent)}">
-          <div class="lw-host-ed-head"><span class="lw-tile-art">${h.sprite ? `<img src="${esc(h.sprite)}" alt="">` : esc(h.emoji)}</span>
-            <div><div class="lw-card-title">${esc(h.title)}</div><small class="lw-hint">${esc(h.name)}</small></div></div>
-          <div class="lw-grid2">
-            <label class="lw-field"><span>Name</span><input type="text" data-f="name" maxlength="40" value="${esc(h.name)}"></label>
-            <label class="lw-field"><span>Placeholder emoji</span><input type="text" data-f="emoji" maxlength="8" value="${esc(h.emoji)}"></label>
+        h => `<div class="lw-card lw-host-ed" data-host-editor="${h.id}" style="--tile:${esc(h.accent)}">
+          <div class="lw-host-ed-head">
+            <span class="lw-sprite-box">${hostArt(h)}</span>
+            <div class="lw-host-ed-meta">
+              <div class="lw-card-title">${esc(h.title)}</div>
+              <div class="lw-row">
+                <button class="lw-ghost lw-small" data-upload="${h.id}">${UPLOAD}<span>${sprites[h.id] ? 'Change image' : 'Upload image'}</span></button>
+                ${sprites[h.id] ? `<button class="lw-ghost lw-small lw-ghost-danger" data-unsprite="${h.id}">Remove</button>` : ''}
+              </div>
+            </div>
           </div>
-          <div class="lw-grid2">
-            <label class="lw-field"><span>Sprite image URL</span><input type="text" data-f="sprite" placeholder="https://... (optional)" value="${esc(h.sprite)}"></label>
+          <div class="lw-grid3">
+            <label class="lw-field"><span>Name</span><input type="text" data-f="name" maxlength="40" value="${esc(h.name)}"></label>
+            <label class="lw-field"><span>Emoji</span><input type="text" data-f="emoji" maxlength="8" value="${esc(h.emoji)}"></label>
             <label class="lw-field"><span>Accent</span><input type="color" data-f="accent" value="${esc(h.accent)}"></label>
           </div>
-          <label class="lw-field"><span>Personality prompt</span><textarea rows="8" data-f="prompt">${esc(h.prompt)}</textarea></label>
-          <button class="lw-ghost lw-small" data-reset-host="${h.id}">Reset ${esc(h.title)}</button>
+          <details class="lw-prompt-box"><summary>Personality prompt</summary><textarea rows="9" data-f="prompt">${esc(h.prompt)}</textarea></details>
+          <button class="lw-linkbtn" data-reset-host="${h.id}">Reset ${esc(h.title)} to default</button>
         </div>`,
       )
       .join('')
     el.charprompt.value = settings?.characterHostPrompt || DEFAULT_CHARACTER_HOST_PROMPT
   }
 
-  function renderSettings(connections?: Array<{ id: string; name: string; provider: string; model: string; isDefault: boolean }>) {
-    if (!settings) return
-    if (connections) {
-      el.sConn.innerHTML =
-        `<option value="">Use my default connection</option>` +
-        connections.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.isDefault ? ' (default)' : ''} · ${esc(c.model || c.provider)}</option>`).join('')
+  function renderConnections() {
+    el.sConn.innerHTML =
+      `<option value="">Use my default connection</option>` +
+      connections.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.isDefault ? ' (default)' : ''}${c.model ? ` · ${esc(c.model)}` : ''}</option>`).join('')
+    if (settings) {
+      if (settings.connectionId && !connections.some(c => c.id === settings!.connectionId)) {
+        el.sConn.insertAdjacentHTML('beforeend', `<option value="${esc(settings.connectionId)}">(saved connection not found)</option>`)
+      }
+      el.sConn.value = settings.connectionId
     }
-    el.sConn.value = settings.connectionId
+    const err = initErrors.find(e => e.startsWith('Connections'))
+    el.sConnHint.textContent = err
+      ? `Couldn't load your connections: ${err.replace(/^Connections:\s*/, '')}`
+      : connections.length
+        ? 'Point this at your sidecar or a cheap model to keep costs down.'
+        : 'No connection profiles found. Make one in Lumiverse, then tap ↻.'
+    el.sConnHint.classList.toggle('lw-warn', !!err)
+  }
+
+  function renderSettings() {
+    if (!settings) return
+    renderConnections()
+    const num = (v: number | null) => (v === null || v === undefined ? '' : String(v))
+    el.sNoReason.checked = settings.noReasoning
     el.sTemp.value = String(settings.temperature)
-    el.sSecs.value = String(settings.slideSeconds)
+    el.sMax.value = num(settings.maxTokens)
+    el.sTopP.value = num(settings.topP)
+    el.sTopK.value = num(settings.topK)
+    el.sMinP.value = num(settings.minP)
+    el.sRep.value = num(settings.repetitionPenalty)
+    el.sFreq.value = num(settings.frequencyPenalty)
+    el.sPres.value = num(settings.presencePenalty)
     el.sTopchars.value = String(settings.topCharCount)
     el.sPerchar.value = String(settings.chatsPerChar)
     el.sSample.value = String(settings.sampleCount)
+    el.sSecs.value = String(settings.slideSeconds)
     el.sCommentary.checked = settings.statsCommentary
-    el.sSpotify.checked = settings.showSpotify
   }
 
   function collectHosts() {
@@ -423,9 +623,22 @@ export function setup(ctx: SpindleFrontendContext) {
       const card = el.hostEditors.querySelector<HTMLElement>(`[data-host-editor="${h.id}"]`)
       if (!card) return h
       const v = (f: string) => (card.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-f="${f}"]`)?.value || '').trim()
-      return { ...h, name: v('name') || h.name, emoji: v('emoji') || h.emoji, sprite: v('sprite'), accent: v('accent') || h.accent, prompt: v('prompt') || h.prompt }
+      return { ...h, name: v('name') || h.name, emoji: v('emoji') || h.emoji, accent: v('accent') || h.accent, prompt: v('prompt') || h.prompt }
     })
     return { hosts, characterHostPrompt: el.charprompt.value.trim() || DEFAULT_CHARACTER_HOST_PROMPT }
+  }
+
+  function renderAll() {
+    renderBanner()
+    renderCharacterSelects()
+    renderScope()
+    renderDepth()
+    renderHostPicker()
+    renderSettings()
+    renderSlides()
+    renderHostEditors()
+    renderLibrary()
+    renderBusy()
   }
 
   // ---------- player ----------
@@ -434,14 +647,13 @@ export function setup(ctx: SpindleFrontendContext) {
     playerWrapId = wrap.id
     player = openPlayer(ctx, wrap, {
       slideSeconds: settings?.slideSeconds || 8,
-      showSpotify: settings?.showSpotify ?? true,
+      sprite: wrap.host.kind === 'builtin' ? sprites[wrap.host.id] : undefined,
       startAt,
       onExpose: chatId => {
         pendingExpose = { wrapId: wrap.id, chatId }
         player?.setBusy('Checking the receipts...')
         ctx.sendToBackend({ type: 'expose_estimate', wrapId: playerWrapId, chatId })
       },
-      onNowPlaying: () => ctx.sendToBackend({ type: 'now_playing' }),
       onClose: () => {
         player = null
         playerWrapId = ''
@@ -452,18 +664,40 @@ export function setup(ctx: SpindleFrontendContext) {
   // ---------- events ----------
   root.querySelectorAll<HTMLButtonElement>('.lw-nav button').forEach(b => b.addEventListener('click', () => setView(b.dataset.view as View)))
 
-  el.scope.addEventListener('change', () => {
-    el.charWrap.hidden = el.scope.value !== 'character'
+  el.banner.addEventListener('click', e => {
+    if ((e.target as HTMLElement).closest('[data-retry]')) ctx.sendToBackend({ type: 'init' })
+  })
+
+  const bumpYear = (d: number) => {
+    el.year.value = String((Number(el.year.value) || thisYear) + d)
+    invalidateScan('Year changed. Scan again to update.')
+  }
+  el.yearDown.addEventListener('click', () => bumpYear(-1))
+  el.yearUp.addEventListener('click', () => bumpYear(1))
+  el.year.addEventListener('change', () => invalidateScan('Year changed. Scan again to update.'))
+
+  el.scope.addEventListener('click', e => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-scope]')
+    if (!b || b.dataset.scope === scope) return
+    scope = b.dataset.scope as Scope
+    renderScope()
     invalidateScan('Scope changed. Scan again to update.')
   })
   el.char.addEventListener('change', () => invalidateScan('Character changed. Scan again to update.'))
-  el.year.addEventListener('change', () => invalidateScan('Year changed. Scan again to update.'))
-  depthRadios.forEach(r => r.addEventListener('change', () => invalidateScan('Scan level changed. Scan again to see what it will read.')))
+
+  el.depths.addEventListener('click', e => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-depth]')
+    if (!b || b.dataset.depth === depth) return
+    depth = b.dataset.depth as Depth
+    renderDepth()
+    invalidateScan('Scan level changed. Scan again to see what it will read.')
+  })
 
   el.hosts.addEventListener('click', e => {
     const tile = (e.target as HTMLElement).closest<HTMLElement>('[data-host]')
     if (!tile) return
     hostRef = tile.dataset.host === 'char' ? `char:${el.hostchar.value}` : tile.dataset.host!
+    if (tile.dataset.host === 'char' && !characters.length) ctx.sendToBackend({ type: 'init' })
     renderHostPicker()
     refreshEstimate()
   })
@@ -482,7 +716,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (busy) return
     const host = currentHostRef()
     if (!host) return setStatus('Pick a character to host, or choose one of the girls.', 'error')
-    if (el.scope.value === 'character' && !el.char.value) return setStatus('Pick a character to wrap.', 'error')
+    if (scope === 'character' && !el.char.value) return setStatus('Pick a character to wrap.', 'error')
     setStatus('')
     scan = null
     el.result.hidden = true
@@ -493,9 +727,9 @@ export function setup(ctx: SpindleFrontendContext) {
       type: 'scan',
       request: {
         year: Number(el.year.value) || thisYear,
-        scope: el.scope.value as Scope,
+        scope,
         characterId: el.char.value,
-        depth: depth(),
+        depth,
         host,
         tzOffset: new Date().getTimezoneOffset(),
       },
@@ -527,20 +761,35 @@ export function setup(ctx: SpindleFrontendContext) {
     ctx.sendToBackend({ type: 'wrap', scanId: scan.scanId, selected: [...selected], host: currentHostRef() })
   })
 
-  el.lib.addEventListener('click', async e => {
+  // library
+  el.lib.addEventListener('click', e => {
     const t = e.target as HTMLElement
     const playBtn = t.closest<HTMLElement>('[data-play]')
     const ren = t.closest<HTMLElement>('[data-rename]')
     const del = t.closest<HTMLElement>('[data-delete]')
-    if (playBtn) ctx.sendToBackend({ type: 'get_wrap', id: playBtn.dataset.play, play: true })
-    else if (ren) {
-      const w = library.find(x => x.id === ren.dataset.rename)
-      const title = prompt('Rename this Lumiwrap', w?.title || '')
-      if (title?.trim()) ctx.sendToBackend({ type: 'rename_wrap', id: ren.dataset.rename, title })
-    } else if (del) {
-      const { confirmed } = await ctx.ui.showConfirm({ title: 'Delete Lumiwrap', message: 'Delete this Lumiwrap? This cannot be undone.', variant: 'danger', confirmLabel: 'Delete' })
-      if (confirmed) ctx.sendToBackend({ type: 'delete_wrap', id: del.dataset.delete })
+    if (del) {
+      const id = del.dataset.delete!
+      twoTap(del, `del:${id}`, `${TRASH}<span>Sure?</span>`, () => ctx.sendToBackend({ type: 'delete_wrap', id }))
+    } else if (ren) {
+      const id = ren.dataset.rename!
+      const item = ren.closest('.lw-libitem')!
+      const w = library.find(x => x.id === id)
+      item.innerHTML = `<form class="lw-rename"><input type="text" maxlength="80" value="${esc(w?.title || '')}"><button class="lw-ghost lw-small" type="submit">Save</button><button class="lw-ghost lw-small" type="button" data-cancel>Cancel</button></form>`
+      const input = item.querySelector('input')!
+      input.focus()
+      input.select()
+      item.querySelector('form')!.addEventListener('submit', ev => {
+        ev.preventDefault()
+        if (input.value.trim()) ctx.sendToBackend({ type: 'rename_wrap', id, title: input.value })
+        else renderLibrary()
+      })
+      item.querySelector('[data-cancel]')!.addEventListener('click', renderLibrary)
+    } else if (playBtn) {
+      ctx.sendToBackend({ type: 'get_wrap', id: playBtn.dataset.play, play: true })
     }
+  })
+  el.deleteAll.addEventListener('click', () => {
+    twoTap(el.deleteAll, 'del:all', `Tap again to delete all ${library.length}`, () => ctx.sendToBackend({ type: 'delete_all_wraps' }))
   })
 
   // slides editor
@@ -559,50 +808,84 @@ export function setup(ctx: SpindleFrontendContext) {
     const t = e.target as HTMLInputElement
     if (t.dataset.title) slidesDraft[Number(t.dataset.title)].title = t.value
     if (t.dataset.prompt) slidesDraft[Number(t.dataset.prompt)].prompt = t.value
-    if (t.dataset.toggle) {
-      slidesDraft[Number(t.dataset.toggle)].enabled = t.checked
-      t.closest('.lw-slide-row')?.classList.toggle('off', !t.checked)
-    }
+  })
+  el.slides.addEventListener('change', e => {
+    const t = e.target as HTMLInputElement
+    if (!t.dataset.toggle) return
+    slidesDraft[Number(t.dataset.toggle)].enabled = t.checked
+    t.closest('.lw-slide-row')?.classList.toggle('off', !t.checked)
   })
   el.slidesSave.addEventListener('click', () => ctx.sendToBackend({ type: 'save_settings', settings: { slides: slidesDraft } }))
-  el.slidesReset.addEventListener('click', async () => {
-    const { confirmed } = await ctx.ui.showConfirm({ title: 'Reset slides', message: 'Put every slide back to its default title, prompt, order and switch?', variant: 'warning', confirmLabel: 'Reset' })
-    if (confirmed) ctx.sendToBackend({ type: 'reset_slides' })
-  })
+  el.slidesReset.addEventListener('click', () => twoTap(el.slidesReset, 'reset:slides', 'Sure?', () => ctx.sendToBackend({ type: 'reset_slides' })))
 
   // hosts editor
   el.hostEditors.addEventListener('click', e => {
-    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-reset-host]')
-    if (!btn || !settings) return
-    const def = DEFAULT_HOSTS.find(h => h.id === btn.dataset.resetHost)
-    const card = el.hostEditors.querySelector<HTMLElement>(`[data-host-editor="${btn.dataset.resetHost}"]`)
-    if (!def || !card) return
-    for (const f of ['name', 'emoji', 'sprite', 'accent', 'prompt'] as const) {
-      const input = card.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-f="${f}"]`)
-      if (input) input.value = def[f]
+    const t = e.target as HTMLElement
+    const up = t.closest<HTMLElement>('[data-upload]')
+    const rm = t.closest<HTMLElement>('[data-unsprite]')
+    const reset = t.closest<HTMLElement>('[data-reset-host]')
+    if (up) {
+      uploadFor = up.dataset.upload!
+      el.file.value = ''
+      el.file.click()
+    } else if (rm) {
+      ctx.sendToBackend({ type: 'save_sprite', hostId: rm.dataset.unsprite, dataUrl: '' })
+    } else if (reset) {
+      const def = DEFAULT_HOSTS.find(h => h.id === reset.dataset.resetHost)
+      const card = el.hostEditors.querySelector<HTMLElement>(`[data-host-editor="${reset.dataset.resetHost}"]`)
+      if (!def || !card) return
+      for (const f of ['name', 'emoji', 'accent', 'prompt'] as const) {
+        const input = card.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-f="${f}"]`)
+        if (input) input.value = def[f]
+      }
+    }
+  })
+  el.file.addEventListener('change', async () => {
+    const file = el.file.files?.[0]
+    if (!file || !uploadFor) return
+    try {
+      const dataUrl = await readImage(file)
+      ctx.sendToBackend({ type: 'save_sprite', hostId: uploadFor, dataUrl })
+    } catch (err: any) {
+      hostsStatus(err?.message || 'That image did not work.')
     }
   })
   el.hostsSave.addEventListener('click', () => ctx.sendToBackend({ type: 'save_settings', settings: collectHosts() }))
-  el.hostsReset.addEventListener('click', async () => {
-    const { confirmed } = await ctx.ui.showConfirm({ title: 'Reset hosts', message: 'Put all three hosts and the character add-on back to their defaults?', variant: 'warning', confirmLabel: 'Reset' })
-    if (confirmed) ctx.sendToBackend({ type: 'reset_hosts' })
-  })
+  el.hostsReset.addEventListener('click', () => twoTap(el.hostsReset, 'reset:hosts', 'Sure?', () => ctx.sendToBackend({ type: 'reset_hosts' })))
 
   // settings
+  el.sRefresh.addEventListener('click', () => ctx.sendToBackend({ type: 'init' }))
   el.sSave.addEventListener('click', () => {
+    const optNum = (i: HTMLInputElement) => (i.value.trim() === '' ? null : Number(i.value))
     ctx.sendToBackend({
       type: 'save_settings',
       settings: {
         connectionId: el.sConn.value,
+        noReasoning: el.sNoReason.checked,
         temperature: Number(el.sTemp.value),
-        slideSeconds: Number(el.sSecs.value),
+        maxTokens: optNum(el.sMax),
+        topP: optNum(el.sTopP),
+        topK: optNum(el.sTopK),
+        minP: optNum(el.sMinP),
+        repetitionPenalty: optNum(el.sRep),
+        frequencyPenalty: optNum(el.sFreq),
+        presencePenalty: optNum(el.sPres),
         topCharCount: Number(el.sTopchars.value),
         chatsPerChar: Number(el.sPerchar.value),
         sampleCount: Number(el.sSample.value),
+        slideSeconds: Number(el.sSecs.value),
         statsCommentary: el.sCommentary.checked,
-        showSpotify: el.sSpotify.checked,
       },
     })
+  })
+
+  // Reload when Lumiwrap's permissions change (e.g. granted after install).
+  const offPerm = ctx.events.on('SPINDLE_PERMISSION_CHANGED', (payload: unknown) => {
+    const d = payload as { extensionId?: string }
+    if (!d?.extensionId || d.extensionId === ctx.manifest?.identifier) ctx.sendToBackend({ type: 'init' })
+  })
+  const offActivate = tab.onActivate(() => {
+    if (!characters.length || missing.length) ctx.sendToBackend({ type: 'init' })
   })
 
   // ---------- backend messages ----------
@@ -611,14 +894,14 @@ export function setup(ctx: SpindleFrontendContext) {
       case 'init_data':
         settings = msg.settings
         characters = msg.characters || []
+        connections = msg.connections || []
+        sprites = msg.sprites || {}
+        missing = msg.missing || []
+        initErrors = msg.errors || []
         slidesDraft = (settings?.slides || DEFAULT_SLIDES).map(s => ({ ...s }))
-        renderCharacterSelects()
-        renderHostPicker()
-        renderSettings(msg.connections || [])
-        renderSlides()
-        renderHostEditors()
+        renderAll()
         break
-      case 'settings_saved': {
+      case 'settings_saved':
         settings = msg.settings
         slidesDraft = settings!.slides.map(s => ({ ...s }))
         renderSettings()
@@ -627,7 +910,13 @@ export function setup(ctx: SpindleFrontendContext) {
         renderHostPicker()
         refreshEstimate()
         break
-      }
+      case 'sprites':
+        sprites = msg.sprites || {}
+        hostsStatus('')
+        renderHostEditors()
+        renderHostPicker()
+        renderLibrary()
+        break
       case 'progress':
         if (msg.stage === 'idle') {
           player?.setBusy('')
@@ -666,6 +955,9 @@ export function setup(ctx: SpindleFrontendContext) {
         library = msg.wraps || []
         renderLibrary()
         break
+      case 'wrap_deleted':
+        if (player && playerWrapId === msg.id) player.close()
+        break
       case 'expose_estimate': {
         if (!player || !pendingExpose || msg.chatId !== pendingExpose.chatId) break
         player.setBusy('')
@@ -680,16 +972,14 @@ export function setup(ctx: SpindleFrontendContext) {
       case 'expose_done':
         if (player && msg.wrap?.id === playerWrapId) player.updateWrap(msg.wrap, msg.slideIndex)
         break
-      case 'now_playing':
-        player?.setNowPlaying(msg.text)
-        break
       case 'error':
         if (msg.where === 'expose' && player) {
           player.setBusy('')
           player.ask(msg.message || 'Something went wrong.', 'OK')
           break
         }
-        setStatus(msg.message || 'Something went wrong.', 'error')
+        if (view === 'hosts') hostsStatus(msg.message || 'Something went wrong.')
+        else setStatus(msg.message || 'Something went wrong.', 'error')
         setProgress('')
         busy = ''
         renderBusy()
@@ -698,12 +988,14 @@ export function setup(ctx: SpindleFrontendContext) {
   })
 
   setView('wrap')
-  renderHostPicker()
-  renderBusy()
+  renderAll()
   ctx.sendToBackend({ type: 'init' })
 
   return () => {
     player?.close()
+    armed.forEach(t => clearTimeout(t))
+    offPerm()
+    offActivate()
     unsub()
     removeStyle()
     tab.destroy()
