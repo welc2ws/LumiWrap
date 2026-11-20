@@ -45,7 +45,7 @@ var DEFAULT_SLIDES = [
   { id: "rerolls", title: "Reroll report", enabled: true, needs: "stats", prompt: "Roast or celebrate how many times they rerolled (swiped) replies, and their most-rerolled chat. Are they picky?" },
   { id: "personas", title: "Who you were", enabled: true, needs: "stats", prompt: "Talk about the personas they played as this year, especially their most-used one." },
   { id: "words", title: "Your top words", enabled: true, needs: "stats", prompt: "Present their most-used words like top songs, and the words their characters kept saying back. Read into it." },
-  { id: "quotes", title: "Quotes of the year", enabled: true, needs: "highlights", prompt: "Pick the best or funniest real line from the excerpts and quote it (keep the quote short). Point out a running joke or pattern if you see one." },
+  { id: "quotes", title: "Quotes of the year", enabled: true, needs: "highlights", prompt: "Pick the best, funniest or most unhinged real line from the excerpts as the quote of the year, then react to it. Point out a running joke or pattern if you see one." },
   { id: "story_arcs", title: "Previously on...", enabled: true, needs: "deep", prompt: 'Recap the biggest storylines from the chat summaries in a dramatic "previously on" way. Spoil everything.' },
   { id: "personality", title: "Your RP personality", enabled: true, needs: "stats", prompt: "Reveal their RP personality archetype and explain why the stats prove it." },
   { id: "outro", title: "See you next year", enabled: true, needs: "stats", prompt: "Wrap it up. A heartfelt (in your own way) send-off and a tease for {{nextYear}}." }
@@ -222,6 +222,8 @@ var STYLES = `
 .lw-host-tile.on::after { content: '✓'; position: absolute; top: 6px; right: 8px; font-size: 11px; font-weight: 900; color: var(--tile); }
 .lw-tile-art { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; overflow: hidden; flex: none;
   background: color-mix(in srgb, var(--tile, #d9b45a) 22%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--tile, #d9b45a) 45%, transparent); }
+.lw-tile-pfp { position: relative; width: 100%; height: 100%; display: grid; place-items: center; font-size: 15px; font-weight: 800; }
+.lw-tile-pfp .lw-av-img { position: absolute; inset: 0; background-size: cover; background-position: center top; }
 .lw-tile-art img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
 .lw-tile-name { font-weight: 800; font-size: 13px; margin-top: 4px; }
 .lw-tile-sub { font-size: 11px; color: var(--lumiverse-text-muted); }
@@ -312,6 +314,41 @@ var STYLES = `
   border: 1px solid color-mix(in srgb, var(--tile) 45%, var(--lumiverse-border)); }
 .lw-sprite-box img { width: 100%; height: 100%; object-fit: contain; object-position: bottom; }
 
+/* character pickers */
+.lw-pickwrap { display: flex; flex-direction: column; gap: 8px; }
+.lw-cp { display: flex; flex-direction: column; gap: 6px; }
+.lw-pill { width: 100%; min-width: 0; display: flex; align-items: center; gap: 9px; padding: 6px 10px 6px 6px; cursor: pointer; text-align: left;
+  background: var(--lumiverse-fill); color: var(--lumiverse-text); border: 1px solid var(--lumiverse-border); border-radius: 999px; font: inherit; }
+.lw-pill:hover, .lw-pill.open { border-color: var(--lw-gold); }
+.lw-pill-av { flex: none; display: flex; }
+.lw-pill-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.lw-pill-main { font-weight: 800; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lw-pill-sub { font-size: 11.5px; color: var(--lumiverse-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lw-pill-chev { width: 18px; height: 18px; flex: none; color: var(--lumiverse-text-muted); transition: transform .15s; }
+.lw-pill-chev svg { width: 18px; height: 18px; }
+.lw-pill.open .lw-pill-chev { transform: rotate(180deg); }
+.lw-mini { position: relative; width: 30px; height: 30px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 800; font-size: 11px; overflow: hidden; }
+.lw-mini .lw-av-img { position: absolute; inset: 0; background-size: cover; background-position: center top; }
+.lw-mini-empty { color: var(--lw-berry); background: color-mix(in srgb, var(--lw-gold) 18%, transparent); }
+.lw-mini-empty svg { width: 17px; height: 17px; }
+.lw-stack { display: flex; }
+.lw-stack .lw-mini { box-shadow: 0 0 0 2px var(--lumiverse-fill); }
+.lw-stack .lw-mini + .lw-mini { margin-left: -10px; }
+.lw-cp-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--lumiverse-border); border-radius: var(--lw-radius);
+  background: var(--lumiverse-fill-subtle); animation: lw-in .15s ease; }
+.lw-cp-list { display: flex; flex-direction: column; max-height: 280px; overflow-y: auto; overscroll-behavior: contain; }
+.lw-cp-row { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px; cursor: pointer; text-align: left; background: none; border: none;
+  border-radius: 8px; color: var(--lumiverse-text); font: inherit; }
+.lw-cp-row:hover { background: var(--lumiverse-fill); }
+.lw-cp-row.on { background: color-mix(in srgb, var(--lw-berry) 12%, transparent); }
+.lw-cp-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
+.lw-cp-box { width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 6px; font-size: 12px; font-weight: 900; color: #fff;
+  border: 1.5px solid var(--lumiverse-border); }
+.lw-cp-row.on .lw-cp-box { background: var(--lw-berry); border-color: var(--lw-berry); }
+.lw-cp-tick { color: var(--lw-berry); font-weight: 900; }
+.lw-cp-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--lumiverse-border); }
+.lw-cp-count { flex: 1; font-size: 11.5px; color: var(--lumiverse-text-muted); text-align: right; }
+
 /* settings */
 .lw-conn-row { display: flex; gap: 6px; align-items: center; }
 .lw-conn-row select { flex: 1; }
@@ -391,6 +428,33 @@ var STYLES = `
 .lw-av { width: clamp(30px, 10cqw, 44px); height: clamp(30px, 10cqw, 44px); font-size: 13px; }
 .lw-av-xl { width: clamp(80px, 32cqw, 150px); height: clamp(80px, 32cqw, 150px); font-size: 34px; border: 4px solid var(--lw-hi); box-shadow: 0 10px 30px rgba(0,0,0,.35); }
 .lw-img { background-size: cover; background-position: center; }
+.lw-av, .lw-av-xl { position: relative; }
+.lw-av-img { position: absolute; inset: 0; border-radius: inherit; background-size: cover; background-position: center top; }
+
+/* quotes */
+.lw-quote { margin: -4cqh 0 0; padding: 0 6px; font-size: clamp(18px, 6.4cqw, 30px); font-weight: 800; line-height: 1.25; font-style: italic;
+  overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
+.lw-quote-by { font-size: max(13px, 3.6cqw); font-weight: 700; color: var(--lw-hi); }
+
+/* expose menu */
+.lw-menu { width: 100%; display: flex; flex-direction: column; gap: 8px; max-height: 40cqh; overflow-y: auto; padding: 2px; }
+.lw-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 14px; cursor: pointer; text-align: left;
+  border: 1.5px solid rgba(255,255,255,.25); background: rgba(0,0,0,.25); color: #fff; font: inherit; }
+.lw-menu-item:hover { background: rgba(0,0,0,.4); border-color: rgba(255,255,255,.6); }
+.lw-menu-item span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.lw-menu-item b { font-size: max(14px, 3.9cqw); overflow-wrap: anywhere; }
+.lw-menu-item small { font-size: max(11px, 3cqw); opacity: .75; }
+.lw-menu-item i { flex: none; font-style: normal; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em;
+  padding: 4px 9px; border-radius: 999px; background: var(--lw-hi); color: #2b1a05; }
+.lw-menu-item.done i { background: rgba(255,255,255,.2); color: #fff; }
+.lw-next-hint { padding: 7px 14px; border-radius: 999px; border: none; cursor: pointer; font: inherit; font-weight: 800; font-size: 13px;
+  color: #fff; background: rgba(255,255,255,.14); }
+.lw-next-hint:hover { background: rgba(255,255,255,.24); }
+.lw-stage[data-slide="expose_menu"] .lw-host { height: 17cqh; }
+.lw-stage[data-slide="expose_menu"] .lw-slide { bottom: 19cqh; justify-content: flex-start; padding-top: 2cqh; }
+.lw-sprite.lw-sprite-pfp { align-items: flex-end; }
+.lw-sprite.lw-sprite-pfp img { width: 100%; max-width: 120px; aspect-ratio: 1; height: auto; max-height: none; object-fit: cover; object-position: top;
+  border-radius: 50%; border: 4px solid var(--lw-accent); box-shadow: 0 8px 22px rgba(0,0,0,.45); }
 
 .lw-chart { display: flex; align-items: flex-end; gap: 4px; width: 100%; height: 22cqh; padding: 0 4px; }
 .lw-col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
@@ -413,11 +477,12 @@ var STYLES = `
   background: rgba(255,255,255,.95); color: #1d1a16; box-shadow: 0 8px 24px rgba(0,0,0,.3); pointer-events: auto; scrollbar-width: thin; }
 .lw-host-name { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; color: color-mix(in srgb, var(--lw-accent) 75%, #000); }
 .lw-say { font-size: max(13px, 3.7cqw); line-height: 1.4; white-space: pre-wrap; min-height: 1.4em; }
-.lw-stage[data-slide="quotes"] .lw-host, .lw-stage[data-slide="story_arcs"] .lw-host, .lw-stage[data-slide="expose"] .lw-host { height: 44cqh; }
-.lw-stage[data-slide="quotes"] .lw-slide, .lw-stage[data-slide="story_arcs"] .lw-slide, .lw-stage[data-slide="expose"] .lw-slide { bottom: 47cqh; }
+.lw-stage[data-slide="story_arcs"] .lw-host, .lw-stage[data-slide="expose"] .lw-host { height: 44cqh; }
+.lw-stage[data-slide="story_arcs"] .lw-slide, .lw-stage[data-slide="expose"] .lw-slide { bottom: 47cqh; }
 .lw-stage[data-slide="quotes"] .lw-say, .lw-stage[data-slide="story_arcs"] .lw-say, .lw-stage[data-slide="expose"] .lw-say { font-size: max(15px, 4.4cqw); }
-.lw-stage[data-slide="outro"] .lw-host { height: 18cqh; }
-.lw-stage[data-slide="outro"] .lw-slide { bottom: 20cqh; justify-content: flex-start; overflow-y: auto; }
+.lw-stage[data-slide="outro"] .lw-host { height: 17cqh; }
+.lw-stage[data-slide="outro"] .lw-slide { bottom: 19cqh; justify-content: flex-start; gap: 1.2cqh; }
+.lw-stage[data-slide="outro"] .lw-bubble, .lw-stage[data-slide="expose_menu"] .lw-bubble { padding: 8px 11px; }
 
 /* taps: below interactive content */
 .lw-tap { position: absolute; top: 60px; bottom: 0; z-index: 1; border: none; background: transparent; cursor: pointer; padding: 0; }
@@ -436,7 +501,7 @@ var STYLES = `
 /* outro */
 .lw-countdown { font-size: clamp(30px, 12cqw, 58px); font-weight: 900; color: var(--lw-hi); text-shadow: 0 0 24px color-mix(in srgb, var(--lw-hi) 60%, transparent); }
 .lw-countdown.pop { animation: lw-pop .5s cubic-bezier(.2,1.6,.4,1) both; }
-.lw-card-preview { width: 46%; max-width: 190px; aspect-ratio: 9 / 16; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.5); background: rgba(255,255,255,.08); }
+.lw-card-preview { height: 34cqh; max-width: 60%; aspect-ratio: 9 / 16; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.5); background: rgba(255,255,255,.08); }
 .lw-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .lw-btn { padding: 9px 16px; border-radius: 999px; border: none; cursor: pointer; font-weight: 800; font-size: 13px; color: #1d1a16; background: var(--lw-hi); }
 .lw-btn-ghost { background: transparent; color: inherit; border: 1.5px solid currentColor; }
@@ -486,10 +551,18 @@ function hue(seed) {
   return Math.abs(h) % 360;
 }
 function avatar(name, url, cls) {
-  if (url)
-    return `<div class="${cls} lw-img" style="background-image:url('${esc(url)}')"></div>`;
   const h = hue(name);
-  return `<div class="${cls}" style="background:hsl(${h} 45% 70%);color:hsl(${h} 50% 18%)">${esc(initials(name))}</div>`;
+  const img = url ? `<i class="lw-av-img" style="background-image:url('${esc(url)}')"></i>` : "";
+  return `<div class="${cls}" style="background-color:hsl(${h} 45% 70%);color:hsl(${h} 50% 18%)">${esc(initials(name))}${img}</div>`;
+}
+function menuLine(wrap) {
+  if (wrap.host.kind === "character")
+    return "Want me to expose you? Pick a chat. I remember everything.";
+  if (wrap.host.id === "present")
+    return "Pick one. I've been dying to— I mean. Whatever. Pick one.";
+  if (wrap.host.id === "future")
+    return "Choose a chat. ...I already know which one you will pick.";
+  return "Ooh, want me to spill?! Pick a chat and I'll tell EVERYONE. Well, just you!";
 }
 var THEME = {
   intro: "pine",
@@ -510,7 +583,11 @@ var THEME = {
 };
 function openPlayer(ctx, initial, opts) {
   let wrap = initial;
-  let index = Math.max(0, Math.min(opts.startAt || 0, wrap.slides.length - 1));
+  const menuSlide = () => ({ id: "expose_menu", title: "Expose me", text: menuLine(wrap) });
+  let slides = [...wrap.slides, menuSlide()];
+  let index = Math.max(0, Math.min(opts.startAt || 0, slides.length - 1));
+  if (opts.startAt === undefined)
+    index = 0;
   let paused = false;
   let elapsed = 0;
   let duration = 8000;
@@ -581,7 +658,7 @@ function openPlayer(ctx, initial, opts) {
     sheet: $("sheet")
   };
   function renderBars() {
-    el.bars.innerHTML = wrap.slides.map((_, i) => `<span><b style="width:${i < index ? 100 : 0}%"></b></span>`).join("");
+    el.bars.innerHTML = slides.map((_, i) => `<span><b style="width:${i < index ? 100 : 0}%"></b></span>`).join("");
   }
   function setBar(pct) {
     const bars = el.bars.querySelectorAll("b");
@@ -592,6 +669,7 @@ function openPlayer(ctx, initial, opts) {
     el.stage.style.setProperty("--lw-accent", h.accent || "#e7c46a");
     el.hname.textContent = h.name;
     const sprite = h.kind === "builtin" ? opts.sprite || "" : h.sprite;
+    el.sprite.classList.toggle("lw-sprite-pfp", h.kind === "character" && !!sprite);
     el.sprite.innerHTML = sprite ? `<img src="${esc(sprite)}" alt="${esc(h.name)}">` : `<span>${esc(h.emoji || "\uD83C\uDF84")}</span>`;
     el.year.textContent = String(wrap.year);
   }
@@ -629,8 +707,8 @@ function openPlayer(ctx, initial, opts) {
     requestAnimationFrame(step);
   }
   function show(i) {
-    index = Math.max(0, Math.min(i, wrap.slides.length - 1));
-    const slide = wrap.slides[index];
+    index = Math.max(0, Math.min(i, slides.length - 1));
+    const slide = slides[index];
     elapsed = 0;
     const words = (slide.text || "").split(/\s+/).length;
     duration = Math.max(opts.slideSeconds * 1000, (words / 3.2 + 2.5) * 1000);
@@ -672,13 +750,12 @@ function openPlayer(ctx, initial, opts) {
     const s = wrap.stats;
     const t = s.totals;
     const title = `<div class="lw-kicker">${esc(slide.title)}</div>`;
-    const exposeBtn = (chatId) => chatId && wrap.chats.some((c) => c.id === chatId) ? `<button class="lw-expose" data-expose="${esc(chatId)}">\uD83D\uDD0D Expose me</button>` : "";
     switch (slide.id) {
       case "intro":
         return `${title}
           <div class="lw-gift">\uD83C\uDF81</div>
           <div class="lw-huge">Your ${s.year}<br><span class="lw-gold">Lumiwrap</span></div>
-          <div class="lw-sub">${fmt(t.chats)} chats · ${fmt(t.characters)} characters${s.scope === "character" ? ` · just ${esc(s.scopeName)}` : ""}</div>`;
+          <div class="lw-sub">${fmt(t.chats)} chats · ${fmt(t.characters)} characters${s.scope !== "all" ? ` · just ${esc(s.scopeName)}` : ""}</div>`;
       case "totals":
         return `${title}
           <div class="lw-big" data-count="${t.userMessages}">0</div>
@@ -709,8 +786,7 @@ function openPlayer(ctx, initial, opts) {
         return `${title}
           <div class="lw-quote-title">“${esc(c.name)}”</div>
           <div class="lw-sub">with ${esc(c.characterName)}</div>
-          <div class="lw-big" data-count="${c.messages}">0</div><div class="lw-label">messages</div>
-          ${exposeBtn(c.id)}`;
+          <div class="lw-big" data-count="${c.messages}">0</div><div class="lw-label">messages</div>`;
       }
       case "time": {
         const max = Math.max(1, ...s.months);
@@ -730,15 +806,14 @@ function openPlayer(ctx, initial, opts) {
           <div class="lw-dice">\uD83C\uDFB2</div>
           <div class="lw-big" data-count="${t.swipes}">0</div><div class="lw-label">rerolls</div>
           ${s.mostRerolledChat ? `<div class="lw-sub">most rerolled: “${esc(s.mostRerolledChat.name)}” with ${esc(s.mostRerolledChat.characterName)}</div>` : ""}
-          ${s.mostSwipedMessage ? `<div class="lw-sub">one message had ${s.mostSwipedMessage.swipes} versions</div>` : ""}
-          ${exposeBtn(s.mostRerolledChat?.id)}`;
+          ${s.mostSwipedMessage ? `<div class="lw-sub">one message had ${s.mostSwipedMessage.swipes} versions</div>` : ""}`;
       case "personas":
         return `${title}<ol class="lw-list">${s.personas.map((p, i) => `<li><span class="lw-rank">${i + 1}</span>${avatar(p.name, null, "lw-av")}<div class="lw-li-text"><b>${esc(p.name)}</b><small>${fmt(p.messages)} messages</small></div></li>`).join("")}</ol>`;
       case "words":
         return `${title}<ol class="lw-list lw-songs">${s.topWords.map((w, i) => `<li><span class="lw-rank">${i + 1}</span><div class="lw-li-text"><b>“${esc(w.word)}”</b><small>${fmt(w.count)} times</small></div></li>`).join("")}</ol>
           ${s.theirWords[0] ? `<div class="lw-sub">they kept saying <b>“${esc(s.theirWords[0].word)}”</b></div>` : ""}`;
       case "quotes":
-        return `${title}<div class="lw-quote-mark">“</div>`;
+        return slide.quote ? `${title}<div class="lw-quote-mark">“</div><blockquote class="lw-quote">${esc(slide.quote)}</blockquote>${slide.quoteBy ? `<div class="lw-quote-by">— ${esc(slide.quoteBy)}</div>` : ""}` : `${title}<div class="lw-quote-mark">“</div>`;
       case "story_arcs":
         return `${title}<div class="lw-film">\uD83C\uDFAC</div><div class="lw-sub">previously, on your ${s.year}...</div>`;
       case "personality":
@@ -751,8 +826,20 @@ function openPlayer(ctx, initial, opts) {
           <div class="lw-stamp">EXPOSED</div>
           <div class="lw-quote-title">“${esc(slide.chatName || "")}”</div>
           <div class="lw-sub">with ${esc(slide.characterName || "")}</div>`;
+      case "expose_menu": {
+        const done = new Set(wrap.slides.filter((x) => x.id === "expose").map((x) => x.chatId || x.chatName));
+        const list = wrap.chats.map((c) => {
+          const exposed = done.has(c.id) || done.has(c.name);
+          const at = exposed ? wrap.slides.findIndex((x) => x.id === "expose" && (x.chatId === c.id || x.chatName === c.name)) : -1;
+          return `<button class="lw-menu-item${exposed ? " done" : ""}" ${exposed ? `data-goto="${at}"` : `data-expose="${esc(c.id)}"`}>
+              <span><b>“${esc(c.name)}”</b><small>${esc(c.characterName)}</small></span><i>${exposed ? "read again" : "expose"}</i></button>`;
+        }).join("");
+        return `<div class="lw-kicker">Bonus round</div>
+          <div class="lw-huge">Expose me</div>
+          <div class="lw-sub">Pick a chat and get roasted for it. You'll see the cost first.</div>
+          <div class="lw-menu">${list || '<div class="lw-sub">No chats to expose.</div>'}</div>`;
+      }
       case "outro": {
-        const chats = wrap.chats.slice(0, 6);
         return `<div class="lw-fireworks" aria-hidden="true">${"<i></i>".repeat(5)}</div>
           <div class="lw-kicker">${esc(slide.title)}</div>
           <div class="lw-countdown" data-p="countdown">Happy ${s.year + 1}!</div>
@@ -761,7 +848,7 @@ function openPlayer(ctx, initial, opts) {
             <button class="lw-btn" data-act="save">⬇ Save image</button>
             <button class="lw-btn lw-btn-ghost" data-act="replay">↺ Replay</button>
           </div>
-          ${chats.length ? `<details class="lw-expose-list"><summary>\uD83D\uDD0D Expose me</summary>${chats.map((c) => `<button data-expose="${esc(c.id)}">“${esc(c.name)}” <small>${esc(c.characterName)}</small></button>`).join("")}</details>` : ""}`;
+          <button class="lw-next-hint" data-act="next">\uD83D\uDD0D Expose me ›</button>`;
       }
       default:
         return title;
@@ -801,7 +888,7 @@ function openPlayer(ctx, initial, opts) {
     g.fillText(String(s.year), W / 2, 340);
     g.font = font(600, 40);
     g.fillStyle = "rgba(255,255,255,.75)";
-    g.fillText(s.scope === "character" ? `with ${s.scopeName}` : "my year in Lumiverse", W / 2, 410);
+    g.fillText(clip(g, s.scope !== "all" ? `with ${s.scopeName}` : "that's a wrap!", W - 200), W / 2, 410);
     g.textAlign = "left";
     g.fillStyle = accent;
     g.font = font(800, 40);
@@ -894,7 +981,8 @@ function openPlayer(ctx, initial, opts) {
       lastTick = now;
     const dt = now - lastTick;
     lastTick = now;
-    const last = index === wrap.slides.length - 1;
+    const outroAt = slides.findIndex((x) => x.id === "outro");
+    const last = index === slides.length - 1 || outroAt >= 0 && index >= outroAt;
     if (!paused && !last) {
       elapsed += dt;
       if (elapsed >= duration)
@@ -904,7 +992,7 @@ function openPlayer(ctx, initial, opts) {
     raf = requestAnimationFrame(tick);
   }
   function next() {
-    if (index < wrap.slides.length - 1)
+    if (index < slides.length - 1)
       show(index + 1);
   }
   function prev() {
@@ -957,6 +1045,10 @@ function openPlayer(ctx, initial, opts) {
       saveCard();
     else if (act?.dataset.act === "replay")
       show(0);
+    else if (act?.dataset.act === "next")
+      next();
+    else if (t.closest("[data-goto]"))
+      show(Number(t.closest("[data-goto]").dataset.goto));
   });
   const onKey = (e) => {
     if (e.key === "ArrowRight")
@@ -994,8 +1086,9 @@ function openPlayer(ctx, initial, opts) {
     close,
     updateWrap(w, jumpTo) {
       wrap = w;
+      slides = [...wrap.slides, menuSlide()];
       renderHost();
-      show(jumpTo ?? Math.min(index, wrap.slides.length - 1));
+      show(jumpTo ?? Math.min(index, slides.length - 1));
       setPaused(false);
     },
     ask(message, okLabel) {
@@ -1027,6 +1120,7 @@ function openPlayer(ctx, initial, opts) {
 var ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="9" width="17" height="11.5" rx="1.6"/><path d="M2.5 9h19V6.8a.8.8 0 0 0-.8-.8H3.3a.8.8 0 0 0-.8.8z"/><path d="M12 6v14.5"/><path d="M12 6c-1.2-2.6-4.6-3.4-5.2-1.6C6.2 6.2 9.6 6.4 12 6zM12 6c1.2-2.6 4.6-3.4 5.2-1.6.6 1.8-2.8 2-5.2 1.6z"/></svg>`;
 var GIFT = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="9.5" width="17" height="11" rx="1.6" fill="currentColor"/><rect x="2.5" y="6.5" width="19" height="3.6" rx=".9" fill="currentColor" opacity=".85"/><rect x="10.6" y="6.5" width="2.8" height="14" fill="#f3d27a"/><path d="M12 6.6c-1.3-2.7-4.8-3.5-5.4-1.6-.6 1.9 3 2.1 5.4 1.6zM12 6.6c1.3-2.7 4.8-3.5 5.4-1.6.6 1.9-3 2.1-5.4 1.6z" fill="#f3d27a"/></svg>`;
 var SNOWFLAKE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2v20M3.3 7l17.4 10M3.3 17 20.7 7"/><path d="m9.5 3.5 2.5 2 2.5-2M9.5 20.5l2.5-2 2.5 2M4 10.2l3-.6-1-2.9M20 13.8l-3 .6 1 2.9M4 13.8l3 .6-1 2.9M20 10.2l-3-.6 1-2.9"/></svg>`;
+var CHEVRON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`;
 var PLAY = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>`;
 var TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.8h6V7M6.5 7l.9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3L17.5 7"/></svg>`;
 var PENCIL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`;
@@ -1100,7 +1194,7 @@ function setup(ctx) {
         <span class="lw-logo">${GIFT}</span>
         <div class="lw-head-text">
           <div class="lw-title">Lumiwrap</div>
-          <div class="lw-tagline">your year, wrapped with a bow</div>
+          <div class="lw-tagline">That's a wrap!</div>
         </div>
       </header>
 
@@ -1124,9 +1218,12 @@ function setup(ctx) {
           </div>
           <div class="lw-seg" data-el="scope">
             <button data-scope="all" class="on">Everything</button>
-            <button data-scope="character">One character</button>
+            <button data-scope="pick">Pick characters</button>
           </div>
-          <label class="lw-field" data-el="char-wrap" hidden><span>Character</span><select data-el="char"></select></label>
+          <div class="lw-pickwrap" data-el="char-wrap" hidden>
+            <div class="lw-cp" data-el="char-picker"></div>
+            <label class="lw-field"><span>Name this Wrapped (optional)</span><input type="text" data-el="label" maxlength="60" placeholder="e.g. Dream SMP"></label>
+          </div>
         </div>
 
         <div class="lw-card">
@@ -1143,7 +1240,7 @@ function setup(ctx) {
         <div class="lw-card">
           <div class="lw-step"><span class="lw-ornament">3</span>Who reads it to you</div>
           <div class="lw-hosts" data-el="hosts"></div>
-          <label class="lw-field" data-el="hostchar-wrap" hidden><span>Character host</span><select data-el="hostchar"></select></label>
+          <div class="lw-cp" data-el="host-picker" hidden></div>
         </div>
 
         <button class="lw-primary" data-el="scan">${SNOWFLAKE}<span>Scan my year</span></button>
@@ -1248,11 +1345,11 @@ function setup(ctx) {
     yearUp: $("year-up"),
     scope: $("scope"),
     charWrap: $("char-wrap"),
-    char: $("char"),
+    charPicker: $("char-picker"),
+    label: $("label"),
     depths: $("depths"),
     hosts: $("hosts"),
-    hostcharWrap: $("hostchar-wrap"),
-    hostchar: $("hostchar"),
+    hostPicker: $("host-picker"),
     scan: $("scan"),
     progress: $("progress"),
     progressText: $("progress-text"),
@@ -1306,6 +1403,8 @@ function setup(ctx) {
   let initErrors = [];
   let missing = [];
   let scope = "all";
+  let pickedChars = new Set;
+  let hostCharId = "";
   let depth = "stats";
   let hostRef = "past";
   let busy = "";
@@ -1358,23 +1457,140 @@ function setup(ctx) {
          <ul>${missing.map((p) => `<li>${esc(PERMISSION_LABEL[p] || p)}</li>`).join("")}</ul>
          <button class="lw-ghost lw-small" data-retry>I granted them, try again</button>` : `<b>Something didn't load.</b><p>${initErrors.map(esc).join("<br>")}</p><button class="lw-ghost lw-small" data-retry>Try again</button>`;
   }
+  function makePicker(host, multi, getSel, setSel) {
+    let open = false;
+    host.innerHTML = `
+      <button class="lw-pill" data-pill aria-expanded="false"><span class="lw-pill-av" data-av></span>
+        <span class="lw-pill-text"><span class="lw-pill-main" data-main></span><span class="lw-pill-sub" data-sub></span></span>
+        <span class="lw-pill-chev">${CHEVRON}</span></button>
+      <div class="lw-cp-panel" data-panel hidden>
+        <input type="text" data-search placeholder="Search characters...">
+        <div class="lw-cp-list" data-list></div>
+        ${multi ? `<div class="lw-cp-foot"><button class="lw-ghost lw-small" data-all>Select shown</button><button class="lw-ghost lw-small" data-none>Clear</button><span class="lw-cp-count" data-count></span><button class="lw-ghost lw-small" data-done>Done</button></div>` : ""}
+      </div>`;
+    const q = (sel) => host.querySelector(sel);
+    const pill = q("[data-pill]");
+    const panel = q("[data-panel]");
+    const search = q("[data-search]");
+    const list = q("[data-list]");
+    const shown = () => {
+      const term = search.value.trim().toLowerCase();
+      return characters.filter((c) => !term || c.name.toLowerCase().includes(term));
+    };
+    function renderPill() {
+      const sel = getSel().map((id) => characters.find((c) => c.id === id)).filter(Boolean);
+      const av = q("[data-av]");
+      const main = q("[data-main]");
+      const sub = q("[data-sub]");
+      if (!sel.length) {
+        av.innerHTML = `<div class="lw-mini lw-mini-empty">${GIFT}</div>`;
+        main.textContent = multi ? "Pick characters" : "Pick a character";
+        sub.textContent = characters.length ? `${characters.length} in your library` : missing.includes("characters") ? "Grant the Characters permission first" : "No characters found";
+      } else if (!multi || sel.length === 1) {
+        av.innerHTML = avatar(sel[0].name, sel[0].avatar, "lw-mini");
+        main.textContent = sel[0].name;
+        sub.textContent = multi ? "1 character" : "Hosting your Lumiwrap";
+      } else {
+        av.innerHTML = `<span class="lw-stack">${sel.slice(0, 3).map((c) => avatar(c.name, c.avatar, "lw-mini")).join("")}</span>`;
+        main.textContent = `${sel.length} characters`;
+        sub.textContent = sel.map((c) => c.name).join(", ");
+      }
+      pill.setAttribute("aria-expanded", String(open));
+      pill.classList.toggle("open", open);
+    }
+    function renderList() {
+      panel.hidden = !open;
+      if (!open)
+        return;
+      const sel = new Set(getSel());
+      const rows = shown();
+      list.innerHTML = rows.length ? rows.map((c) => `<button class="lw-cp-row${sel.has(c.id) ? " on" : ""}" data-id="${esc(c.id)}">
+                ${avatar(c.name, c.avatar, "lw-mini")}<span class="lw-cp-name">${esc(c.name)}</span>
+                ${multi ? `<span class="lw-cp-box">${sel.has(c.id) ? "✓" : ""}</span>` : sel.has(c.id) ? '<span class="lw-cp-tick">✓</span>' : ""}</button>`).join("") : `<div class="lw-hint lw-pad">${characters.length ? "No characters match." : "No characters found."}</div>`;
+      const count = host.querySelector("[data-count]");
+      if (count)
+        count.textContent = `${sel.size} picked`;
+    }
+    pill.addEventListener("click", () => {
+      open = !open;
+      if (open) {
+        search.value = "";
+        if (!characters.length)
+          ctx.sendToBackend({ type: "init" });
+      }
+      renderPill();
+      renderList();
+      if (open)
+        search.focus();
+    });
+    search.addEventListener("input", renderList);
+    list.addEventListener("click", (e) => {
+      const row = e.target.closest("[data-id]");
+      if (!row)
+        return;
+      const id = row.dataset.id;
+      if (multi) {
+        const sel = new Set(getSel());
+        if (sel.has(id))
+          sel.delete(id);
+        else
+          sel.add(id);
+        setSel([...sel]);
+      } else {
+        setSel([id]);
+        open = false;
+      }
+      renderPill();
+      renderList();
+    });
+    host.querySelector("[data-all]")?.addEventListener("click", () => {
+      setSel([...new Set([...getSel(), ...shown().map((c) => c.id)])]);
+      renderPill();
+      renderList();
+    });
+    host.querySelector("[data-none]")?.addEventListener("click", () => {
+      setSel([]);
+      renderPill();
+      renderList();
+    });
+    host.querySelector("[data-done]")?.addEventListener("click", () => {
+      open = false;
+      renderPill();
+      renderList();
+    });
+    return {
+      render() {
+        renderPill();
+        renderList();
+      },
+      close() {
+        open = false;
+        renderPill();
+        renderList();
+      }
+    };
+  }
+  const charPicker = makePicker(el.charPicker, true, () => [...pickedChars], (ids) => {
+    pickedChars = new Set(ids);
+    invalidateScan("Characters changed. Scan again to update.");
+  });
+  const hostPicker = makePicker(el.hostPicker, false, () => hostCharId ? [hostCharId] : [], (ids) => {
+    hostCharId = ids[0] || "";
+    hostRef = `char:${hostCharId}`;
+    renderHostPicker();
+    refreshEstimate();
+  });
   function renderCharacterSelects() {
-    const empty = missing.includes("characters") ? "Grant the Characters permission first" : "No characters found";
-    const opts = characters.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
-    const keepChar = el.char.value;
-    const keepHost = el.hostchar.value;
-    el.char.innerHTML = opts || `<option value="">${empty}</option>`;
-    el.hostchar.innerHTML = opts || `<option value="">${empty}</option>`;
-    if (keepChar && characters.some((c) => c.id === keepChar))
-      el.char.value = keepChar;
-    if (keepHost && characters.some((c) => c.id === keepHost))
-      el.hostchar.value = keepHost;
-    if (hostRef.startsWith("char:"))
-      hostRef = `char:${el.hostchar.value}`;
+    const ids = new Set(characters.map((c) => c.id));
+    pickedChars = new Set([...pickedChars].filter((id) => ids.has(id)));
+    if (hostCharId && !ids.has(hostCharId))
+      hostCharId = "";
+    charPicker.render();
+    hostPicker.render();
   }
   function renderScope() {
     el.scope.querySelectorAll("[data-scope]").forEach((b) => b.classList.toggle("on", b.dataset.scope === scope));
-    el.charWrap.hidden = scope !== "character";
+    el.charWrap.hidden = scope !== "pick";
   }
   function renderDepth() {
     el.depths.querySelectorAll("[data-depth]").forEach((b) => b.classList.toggle("on", b.dataset.depth === depth));
@@ -1383,13 +1599,17 @@ function setup(ctx) {
     const hosts = settings?.hosts || DEFAULT_HOSTS;
     el.hosts.innerHTML = hosts.map((h) => `<button class="lw-host-tile${hostRef === h.id ? " on" : ""}" data-host="${h.id}" style="--tile:${esc(h.accent)}">
             <span class="lw-tile-art">${hostArt(h)}</span>
-            <span class="lw-tile-name">${esc(h.name)}</span><span class="lw-tile-sub">${esc(h.title)}</span></button>`).join("") + `<button class="lw-host-tile${hostRef.startsWith("char:") ? " on" : ""}" data-host="char" style="--tile:#d9b45a">
-        <span class="lw-tile-art"><span>\uD83C\uDF81</span></span><span class="lw-tile-name">A character</span><span class="lw-tile-sub">from your library</span></button>`;
-    el.hostcharWrap.hidden = !hostRef.startsWith("char:");
+            <span class="lw-tile-name">${esc(h.name)}</span><span class="lw-tile-sub">${esc(h.title)}</span></button>`).join("") + (() => {
+      const c = characters.find((x) => x.id === hostCharId);
+      const art = c ? avatar(c.name, c.avatar, "lw-tile-pfp") : "<span>\uD83C\uDF81</span>";
+      return `<button class="lw-host-tile${hostRef.startsWith("char:") ? " on" : ""}" data-host="char" style="--tile:#d9b45a">
+          <span class="lw-tile-art">${art}</span><span class="lw-tile-name">${esc(c ? c.name : "A character")}</span><span class="lw-tile-sub">${c ? "from your library" : "from your library"}</span></button>`;
+    })();
+    el.hostPicker.hidden = !hostRef.startsWith("char:");
   }
   function currentHostRef() {
     if (hostRef.startsWith("char:"))
-      return el.hostchar.value ? `char:${el.hostchar.value}` : "";
+      return hostCharId ? `char:${hostCharId}` : "";
     return hostRef;
   }
   function hostName() {
@@ -1439,7 +1659,7 @@ function setup(ctx) {
         <div><b>${fmt(t.chats)}</b><small>chats</small></div>
         <div><b>${fmt(t.characters)}</b><small>characters</small></div>
       </div>
-      <div class="lw-hint">in ${scan.stats.year}${scan.stats.scope === "character" ? ` with ${esc(scan.stats.scopeName)}` : ""}</div>`;
+      <div class="lw-hint">in ${scan.stats.year}${scan.stats.scope !== "all" ? ` with ${esc(scan.stats.scopeName)}` : ""}</div>`;
     el.pickedWrap.hidden = scan.depth === "stats";
     el.pickedHint.textContent = scan.depth === "deep" ? "(tokens to read each)" : "(tokens per sample)";
     el.picked.innerHTML = scan.picked.length ? scan.picked.map((p) => {
@@ -1623,7 +1843,7 @@ function setup(ctx) {
     renderScope();
     invalidateScan("Scope changed. Scan again to update.");
   });
-  el.char.addEventListener("change", () => invalidateScan("Character changed. Scan again to update."));
+  el.label.addEventListener("change", () => invalidateScan());
   el.depths.addEventListener("click", (e) => {
     const b = e.target.closest("[data-depth]");
     if (!b || b.dataset.depth === depth)
@@ -1636,15 +1856,11 @@ function setup(ctx) {
     const tile = e.target.closest("[data-host]");
     if (!tile)
       return;
-    hostRef = tile.dataset.host === "char" ? `char:${el.hostchar.value}` : tile.dataset.host;
+    hostRef = tile.dataset.host === "char" ? `char:${hostCharId}` : tile.dataset.host;
     if (tile.dataset.host === "char" && !characters.length)
       ctx.sendToBackend({ type: "init" });
     renderHostPicker();
-    refreshEstimate();
-  });
-  el.hostchar.addEventListener("change", () => {
-    if (hostRef.startsWith("char:"))
-      hostRef = `char:${el.hostchar.value}`;
+    hostPicker.render();
     refreshEstimate();
   });
   function refreshEstimate() {
@@ -1659,8 +1875,10 @@ function setup(ctx) {
     const host = currentHostRef();
     if (!host)
       return setStatus("Pick a character to host, or choose one of the girls.", "error");
-    if (scope === "character" && !el.char.value)
-      return setStatus("Pick a character to wrap.", "error");
+    hostPicker.close();
+    if (scope === "pick" && !pickedChars.size)
+      return setStatus("Pick at least one character to wrap.", "error");
+    charPicker.close();
     setStatus("");
     scan = null;
     el.result.hidden = true;
@@ -1672,7 +1890,8 @@ function setup(ctx) {
       request: {
         year: Number(el.year.value) || thisYear,
         scope,
-        characterId: el.char.value,
+        characterIds: [...pickedChars],
+        label: el.label.value.trim(),
         depth,
         host,
         tzOffset: new Date().getTimezoneOffset()

@@ -35,10 +35,18 @@ function hue(seed: string) {
   return Math.abs(h) % 360
 }
 
-function avatar(name: string, url: string | null, cls: string) {
-  if (url) return `<div class="${cls} lw-img" style="background-image:url('${esc(url)}')"></div>`
+export function avatar(name: string, url: string | null, cls: string) {
   const h = hue(name)
-  return `<div class="${cls}" style="background:hsl(${h} 45% 70%);color:hsl(${h} 50% 18%)">${esc(initials(name))}</div>`
+  // Initials sit underneath, so a missing picture still looks fine.
+  const img = url ? `<i class="lw-av-img" style="background-image:url('${esc(url)}')"></i>` : ''
+  return `<div class="${cls}" style="background-color:hsl(${h} 45% 70%);color:hsl(${h} 50% 18%)">${esc(initials(name))}${img}</div>`
+}
+
+function menuLine(wrap: Wrap) {
+  if (wrap.host.kind === 'character') return 'Want me to expose you? Pick a chat. I remember everything.'
+  if (wrap.host.id === 'present') return "Pick one. I've been dying to— I mean. Whatever. Pick one."
+  if (wrap.host.id === 'future') return 'Choose a chat. ...I already know which one you will pick.'
+  return "Ooh, want me to spill?! Pick a chat and I'll tell EVERYONE. Well, just you!"
 }
 
 /** Theme per slide: pine, cranberry, midnight, gold, new-year night. */
@@ -67,7 +75,11 @@ const CHAT_SLIDES: Record<string, (w: Wrap) => string | undefined> = {
 
 export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: PlayerOptions): PlayerHandle {
   let wrap = initial
-  let index = Math.max(0, Math.min(opts.startAt || 0, wrap.slides.length - 1))
+  /** The wrap's slides plus the Expose me menu at the very end. */
+  const menuSlide = (): RenderedSlide => ({ id: 'expose_menu', title: 'Expose me', text: menuLine(wrap) })
+  let slides: RenderedSlide[] = [...wrap.slides, menuSlide()]
+  let index = Math.max(0, Math.min(opts.startAt || 0, slides.length - 1))
+  if (opts.startAt === undefined) index = 0
   let paused = false
   let elapsed = 0
   let duration = 8000
@@ -143,7 +155,7 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
   }
 
   function renderBars() {
-    el.bars.innerHTML = wrap.slides.map((_, i) => `<span><b style="width:${i < index ? 100 : 0}%"></b></span>`).join('')
+    el.bars.innerHTML = slides.map((_, i) => `<span><b style="width:${i < index ? 100 : 0}%"></b></span>`).join('')
   }
 
   function setBar(pct: number) {
@@ -156,6 +168,7 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     el.stage.style.setProperty('--lw-accent', h.accent || '#e7c46a')
     el.hname.textContent = h.name
     const sprite = h.kind === 'builtin' ? opts.sprite || '' : h.sprite
+    el.sprite.classList.toggle('lw-sprite-pfp', h.kind === 'character' && !!sprite)
     el.sprite.innerHTML = sprite
       ? `<img src="${esc(sprite)}" alt="${esc(h.name)}">`
       : `<span>${esc(h.emoji || '🎄')}</span>`
@@ -195,8 +208,8 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
   }
 
   function show(i: number) {
-    index = Math.max(0, Math.min(i, wrap.slides.length - 1))
-    const slide = wrap.slides[index]
+    index = Math.max(0, Math.min(i, slides.length - 1))
+    const slide = slides[index]
     elapsed = 0
     const words = (slide.text || '').split(/\s+/).length
     duration = Math.max(opts.slideSeconds * 1000, (words / 3.2 + 2.5) * 1000)
@@ -240,15 +253,13 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     const s = wrap.stats
     const t = s.totals
     const title = `<div class="lw-kicker">${esc(slide.title)}</div>`
-    const exposeBtn = (chatId?: string) =>
-      chatId && wrap.chats.some(c => c.id === chatId) ? `<button class="lw-expose" data-expose="${esc(chatId)}">🔍 Expose me</button>` : ''
 
     switch (slide.id) {
       case 'intro':
         return `${title}
           <div class="lw-gift">🎁</div>
           <div class="lw-huge">Your ${s.year}<br><span class="lw-gold">Lumiwrap</span></div>
-          <div class="lw-sub">${fmt(t.chats)} chats · ${fmt(t.characters)} characters${s.scope === 'character' ? ` · just ${esc(s.scopeName)}` : ''}</div>`
+          <div class="lw-sub">${fmt(t.chats)} chats · ${fmt(t.characters)} characters${s.scope !== 'all' ? ` · just ${esc(s.scopeName)}` : ''}</div>`
       case 'totals':
         return `${title}
           <div class="lw-big" data-count="${t.userMessages}">0</div>
@@ -282,8 +293,7 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
         return `${title}
           <div class="lw-quote-title">“${esc(c.name)}”</div>
           <div class="lw-sub">with ${esc(c.characterName)}</div>
-          <div class="lw-big" data-count="${c.messages}">0</div><div class="lw-label">messages</div>
-          ${exposeBtn(c.id)}`
+          <div class="lw-big" data-count="${c.messages}">0</div><div class="lw-label">messages</div>`
       }
       case 'time': {
         const max = Math.max(1, ...s.months)
@@ -305,8 +315,7 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
           <div class="lw-dice">🎲</div>
           <div class="lw-big" data-count="${t.swipes}">0</div><div class="lw-label">rerolls</div>
           ${s.mostRerolledChat ? `<div class="lw-sub">most rerolled: “${esc(s.mostRerolledChat.name)}” with ${esc(s.mostRerolledChat.characterName)}</div>` : ''}
-          ${s.mostSwipedMessage ? `<div class="lw-sub">one message had ${s.mostSwipedMessage.swipes} versions</div>` : ''}
-          ${exposeBtn(s.mostRerolledChat?.id)}`
+          ${s.mostSwipedMessage ? `<div class="lw-sub">one message had ${s.mostSwipedMessage.swipes} versions</div>` : ''}`
       case 'personas':
         return `${title}<ol class="lw-list">${s.personas
           .map((p, i) => `<li><span class="lw-rank">${i + 1}</span>${avatar(p.name, null, 'lw-av')}<div class="lw-li-text"><b>${esc(p.name)}</b><small>${fmt(p.messages)} messages</small></div></li>`)
@@ -317,7 +326,9 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
           .join('')}</ol>
           ${s.theirWords[0] ? `<div class="lw-sub">they kept saying <b>“${esc(s.theirWords[0].word)}”</b></div>` : ''}`
       case 'quotes':
-        return `${title}<div class="lw-quote-mark">“</div>`
+        return slide.quote
+          ? `${title}<div class="lw-quote-mark">“</div><blockquote class="lw-quote">${esc(slide.quote)}</blockquote>${slide.quoteBy ? `<div class="lw-quote-by">— ${esc(slide.quoteBy)}</div>` : ''}`
+          : `${title}<div class="lw-quote-mark">“</div>`
       case 'story_arcs':
         return `${title}<div class="lw-film">🎬</div><div class="lw-sub">previously, on your ${s.year}...</div>`
       case 'personality':
@@ -330,8 +341,22 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
           <div class="lw-stamp">EXPOSED</div>
           <div class="lw-quote-title">“${esc(slide.chatName || '')}”</div>
           <div class="lw-sub">with ${esc(slide.characterName || '')}</div>`
+      case 'expose_menu': {
+        const done = new Set(wrap.slides.filter(x => x.id === 'expose').map(x => x.chatId || x.chatName))
+        const list = wrap.chats
+          .map(c => {
+            const exposed = done.has(c.id) || done.has(c.name)
+            const at = exposed ? wrap.slides.findIndex(x => x.id === 'expose' && (x.chatId === c.id || x.chatName === c.name)) : -1
+            return `<button class="lw-menu-item${exposed ? ' done' : ''}" ${exposed ? `data-goto="${at}"` : `data-expose="${esc(c.id)}"`}>
+              <span><b>“${esc(c.name)}”</b><small>${esc(c.characterName)}</small></span><i>${exposed ? 'read again' : 'expose'}</i></button>`
+          })
+          .join('')
+        return `<div class="lw-kicker">Bonus round</div>
+          <div class="lw-huge">Expose me</div>
+          <div class="lw-sub">Pick a chat and get roasted for it. You'll see the cost first.</div>
+          <div class="lw-menu">${list || '<div class="lw-sub">No chats to expose.</div>'}</div>`
+      }
       case 'outro': {
-        const chats = wrap.chats.slice(0, 6)
         return `<div class="lw-fireworks" aria-hidden="true">${'<i></i>'.repeat(5)}</div>
           <div class="lw-kicker">${esc(slide.title)}</div>
           <div class="lw-countdown" data-p="countdown">Happy ${s.year + 1}!</div>
@@ -340,7 +365,7 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
             <button class="lw-btn" data-act="save">⬇ Save image</button>
             <button class="lw-btn lw-btn-ghost" data-act="replay">↺ Replay</button>
           </div>
-          ${chats.length ? `<details class="lw-expose-list"><summary>🔍 Expose me</summary>${chats.map(c => `<button data-expose="${esc(c.id)}">“${esc(c.name)}” <small>${esc(c.characterName)}</small></button>`).join('')}</details>` : ''}`
+          <button class="lw-next-hint" data-act="next">🔍 Expose me ›</button>`
       }
       default:
         return title
@@ -387,7 +412,7 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     g.fillText(String(s.year), W / 2, 340)
     g.font = font(600, 40)
     g.fillStyle = 'rgba(255,255,255,.75)'
-    g.fillText(s.scope === 'character' ? `with ${s.scopeName}` : 'my year in Lumiverse', W / 2, 410)
+    g.fillText(clip(g, s.scope !== 'all' ? `with ${s.scopeName}` : "that's a wrap!", W - 200), W / 2, 410)
 
     // top list
     g.textAlign = 'left'
@@ -488,7 +513,9 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     if (!lastTick) lastTick = now
     const dt = now - lastTick
     lastTick = now
-    const last = index === wrap.slides.length - 1
+    // Auto-advance stops at the outro; the extras after it are tap-only.
+    const outroAt = slides.findIndex(x => x.id === 'outro')
+    const last = index === slides.length - 1 || (outroAt >= 0 && index >= outroAt)
     if (!paused && !last) {
       elapsed += dt
       if (elapsed >= duration) next()
@@ -498,7 +525,7 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
   }
 
   function next() {
-    if (index < wrap.slides.length - 1) show(index + 1)
+    if (index < slides.length - 1) show(index + 1)
   }
   function prev() {
     show(index > 0 ? index - 1 : 0)
@@ -549,6 +576,8 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
       opts.onExpose(ex.dataset.expose!)
     } else if (act?.dataset.act === 'save') saveCard()
     else if (act?.dataset.act === 'replay') show(0)
+    else if (act?.dataset.act === 'next') next()
+    else if (t.closest('[data-goto]')) show(Number(t.closest<HTMLElement>('[data-goto]')!.dataset.goto))
   })
 
   const onKey = (e: KeyboardEvent) => {
@@ -586,8 +615,9 @@ export function openPlayer(ctx: SpindleFrontendContext, initial: Wrap, opts: Pla
     close,
     updateWrap(w, jumpTo) {
       wrap = w
+      slides = [...wrap.slides, menuSlide()]
       renderHost()
-      show(jumpTo ?? Math.min(index, wrap.slides.length - 1))
+      show(jumpTo ?? Math.min(index, slides.length - 1))
       setPaused(false)
     },
     ask(message, okLabel) {

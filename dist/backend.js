@@ -46,7 +46,7 @@ var DEFAULT_SLIDES = [
   { id: "rerolls", title: "Reroll report", enabled: true, needs: "stats", prompt: "Roast or celebrate how many times they rerolled (swiped) replies, and their most-rerolled chat. Are they picky?" },
   { id: "personas", title: "Who you were", enabled: true, needs: "stats", prompt: "Talk about the personas they played as this year, especially their most-used one." },
   { id: "words", title: "Your top words", enabled: true, needs: "stats", prompt: "Present their most-used words like top songs, and the words their characters kept saying back. Read into it." },
-  { id: "quotes", title: "Quotes of the year", enabled: true, needs: "highlights", prompt: "Pick the best or funniest real line from the excerpts and quote it (keep the quote short). Point out a running joke or pattern if you see one." },
+  { id: "quotes", title: "Quotes of the year", enabled: true, needs: "highlights", prompt: "Pick the best, funniest or most unhinged real line from the excerpts as the quote of the year, then react to it. Point out a running joke or pattern if you see one." },
   { id: "story_arcs", title: "Previously on...", enabled: true, needs: "deep", prompt: 'Recap the biggest storylines from the chat summaries in a dramatic "previously on" way. Spoil everything.' },
   { id: "personality", title: "Your RP personality", enabled: true, needs: "stats", prompt: "Reveal their RP personality archetype and explain why the stats prove it." },
   { id: "outro", title: "See you next year", enabled: true, needs: "stats", prompt: "Wrap it up. A heartfelt (in your own way) send-off and a tease for {{nextYear}}." }
@@ -54,7 +54,7 @@ var DEFAULT_SLIDES = [
 var SLIDE_IDS = DEFAULT_SLIDES.map((s) => s.id);
 var DEFAULT_SETTINGS = {
   connectionId: "",
-  temperature: 0.9,
+  temperature: 1,
   sampleCount: 14,
   topCharCount: 3,
   chatsPerChar: 2,
@@ -74,6 +74,9 @@ var DEFAULT_SETTINGS = {
 };
 function normalizeSettings(saved) {
   const s = { ...DEFAULT_SETTINGS, ...saved };
+  if (!saved.version && Number(saved.temperature) === 0.9)
+    s.temperature = 1;
+  s.version = 3;
   const hosts = Array.isArray(saved.hosts) ? saved.hosts : [];
   s.hosts = DEFAULT_HOSTS.map((d) => ({ ...d, ...hosts.find((h) => h?.id === d.id) || {} }));
   const slides = Array.isArray(saved.slides) ? saved.slides.filter((x) => x && SLIDE_IDS.includes(x.id)) : [];
@@ -82,7 +85,7 @@ function normalizeSettings(saved) {
     ...slides.map((x) => ({ ...DEFAULT_SLIDES.find((d) => d.id === x.id), ...x, needs: DEFAULT_SLIDES.find((d) => d.id === x.id).needs })),
     ...DEFAULT_SLIDES.filter((d) => !seen.has(d.id))
   ];
-  s.temperature = clamp(Number(s.temperature), 0, 2, 0.9);
+  s.temperature = clamp(Number(s.temperature), 0, 2, 1);
   s.sampleCount = Math.round(clamp(Number(s.sampleCount), 4, 60, 14));
   s.topCharCount = Math.round(clamp(Number(s.topCharCount), 1, 10, 3));
   s.chatsPerChar = Math.round(clamp(Number(s.chatsPerChar), 1, 10, 2));
@@ -112,6 +115,11 @@ function clamp(n, lo, hi, fallback) {
   if (!Number.isFinite(n))
     return fallback;
   return Math.min(hi, Math.max(lo, n));
+}
+function characterAvatarUrl(id, imageId, size = "sm") {
+  if (!id)
+    return null;
+  return imageId ? `/api/v1/images/${imageId}?size=${size}` : `/api/v1/characters/${id}/avatar?size=${size}`;
 }
 var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 var WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -619,7 +627,15 @@ async function resolveHost(hostRef, settings, userId) {
 
 `);
     return {
-      host: { kind: "character", id: c.id, name: c.name, emoji: "\uD83C\uDF81", sprite: c.avatar_url || "", accent: "#e7c46a", avatar: c.avatar_url || null },
+      host: {
+        kind: "character",
+        id: c.id,
+        name: c.name,
+        emoji: "\uD83C\uDF81",
+        sprite: characterAvatarUrl(c.id, c.image_id, "lg") || "",
+        accent: "#e7c46a",
+        avatar: characterAvatarUrl(c.id, c.image_id, "sm")
+      },
       prompt: settings.characterHostPrompt,
       card
     };
@@ -650,11 +666,16 @@ async function scan(req, userId) {
     const tz = Number(req.tzOffset) || 0;
     progress("Finding your characters...");
     const allChars = await listAll((o) => spindle.characters.list({ limit: 200, offset: o, userId }), 200);
-    const chars = req.scope === "character" ? allChars.filter((c) => c.id === req.characterId) : allChars;
-    if (req.scope === "character" && !chars.length)
-      throw new Error("Pick a character to wrap.");
+    const pickedIds = new Set((req.characterIds || []).map(String));
+    const picking = req.scope === "pick";
+    const chars = picking ? allChars.filter((c) => pickedIds.has(c.id)) : allChars;
+    if (picking && !chars.length)
+      throw new Error("Pick at least one character to wrap.");
     const personas = await listAll((o) => spindle.personas.list({ limit: 200, offset: o, userId }), 200).catch(() => []);
-    const scopeName = req.scope === "character" ? chars[0].name : "Everything";
+    const label = String(req.label || "").trim().slice(0, 60);
+    const single = picking && chars.length === 1;
+    const scope = !picking ? "all" : single ? "character" : "pick";
+    const scopeName = !picking ? "Everything" : label || (single ? chars[0].name : chars.length <= 3 ? chars.map((c) => c.name).join(", ") : `${chars.length} characters`);
     const yearStart = Date.UTC(year, 0, 1) / 1000 - 2 * 86400;
     const yearEnd = Date.UTC(year + 1, 0, 1) / 1000 + 2 * 86400;
     const toSec = (n) => n > 1000000000000 ? n / 1000 : n;
@@ -669,27 +690,27 @@ async function scan(req, userId) {
         jobs.push({ chat, char });
       }
     }
-    const builder = new StatsBuilder(year, tz, req.scope === "character" ? "character" : "all", scopeName, [
+    const builder = new StatsBuilder(year, tz, scope, scopeName, [
       ...allChars.map((c) => c.name),
       ...personas.map((p) => p.name)
     ]);
     let done = 0;
     for (const { chat, char } of jobs) {
       const msgs = await fetchMessages(chat.id).catch(() => []);
-      builder.addChat({ id: chat.id, name: chat.name, characterId: char.id, characterName: char.name, avatar: char.avatar_url || null, created: chat.created_at }, msgs);
+      builder.addChat({ id: chat.id, name: chat.name, characterId: char.id, characterName: char.name, avatar: characterAvatarUrl(char.id, char.image_id, "sm"), created: chat.created_at }, msgs);
       done++;
       if (done % 3 === 0 || done === jobs.length)
         progress(`Counting messages in ${jobs.length} chats...`, done, jobs.length);
     }
     const stats = builder.finish();
     if (!stats.totals.messages)
-      throw new Error(`No messages found in ${year}${req.scope === "character" ? ` with ${scopeName}` : ""}.`);
+      throw new Error(`No messages found in ${year}${picking ? ` with ${scopeName}` : ""}.`);
     const picked = [];
     const samples = new Map;
     const userName = await userDisplayName(userId, stats);
     if (depth !== "stats") {
-      const ranked = builder.rankedCharacters().slice(0, req.scope === "character" ? 1 : settings.topCharCount);
-      const perChar = req.scope === "character" ? Math.max(settings.chatsPerChar, 3) : settings.chatsPerChar;
+      const ranked = builder.rankedCharacters().slice(0, single ? 1 : settings.topCharCount);
+      const perChar = single ? Math.max(settings.chatsPerChar, 3) : settings.chatsPerChar;
       const all = builder.chats();
       const candidates = [];
       for (const c of ranked) {
@@ -813,7 +834,7 @@ function activeSlides(session, settings, hasSamples, hasSummaries) {
 function statsBrief(s, user) {
   const t = s.totals;
   const lines = [
-    `Year: ${s.year}. Scope: ${s.scope === "character" ? `only chats with ${s.scopeName}` : "everything"}.`,
+    `Year: ${s.year}. Scope: ${s.scope === "all" ? "everything" : `only chats with ${s.scopeName}`}.`,
     `Messages: ${fmt(t.messages)} total (${fmt(t.userMessages)} by ${user}, ${fmt(t.aiMessages)} by characters).`,
     `Words: ${fmt(t.userWords)} written by ${user} (avg ${s.avgUserWords} per message); characters wrote ${fmt(t.aiWords)} (avg ${s.avgAiWords}).`,
     `Chats active: ${t.chats} (${t.newChats} started this year). Characters: ${t.characters}.`,
@@ -833,13 +854,16 @@ function statsBrief(s, user) {
 `);
 }
 var FORMAT_RULES = `FORMAT: For each slide, write a line with only "=== slide_id ===" and then the host's line underneath. Use the exact slide ids given. Each slide is 1 to 3 short sentences (under 60 words), spoken by the host directly to the user. Use the real numbers and names. No narration of actions longer than a few words, no preamble, nothing after the last slide.`;
+var QUOTE_RULE = `For the quotes slide only: its first line must be QUOTE: "<a real line copied word for word from the excerpts, under 30 words>" \u2014 <who said it>. Your reaction goes on the lines after it.`;
 function buildPrompt(session, settings, slides, summaries, useSamples) {
   const s = session.stats;
   const vars = statVars(s, session.userName, session.host.name);
   vars.char = session.host.name;
+  const rules = slides.some((sl) => sl.id === "quotes") ? `${FORMAT_RULES}
+${QUOTE_RULE}` : FORMAT_RULES;
   const system = `${fillMacros(session.hostPrompt, vars)}
 
-${FORMAT_RULES}`;
+${rules}`;
   const parts = [
     session.host.kind === "character" && session.characterCard ? `ABOUT ${session.host.name.toUpperCase()} (you):
 ${session.characterCard}` : "",
@@ -932,6 +956,29 @@ Rewrite the story so far to include the new events: the plot, relationship beats
   await spindle.userStorage.setJson(deepPath(chatId), { messageCount: msgs.length, summary }, { userId });
   return { summary, tokens };
 }
+function splitQuote(text) {
+  const lines = text.split(`
+`);
+  const i = lines.findIndex((l) => /^\s*\**\s*quote\s*\**\s*:/i.test(l));
+  let line = "";
+  let rest = text;
+  if (i >= 0) {
+    line = lines[i].replace(/^\s*\**\s*quote\s*\**\s*:\s*\**\s*/i, "").trim();
+    rest = lines.filter((_, j) => j !== i).join(`
+`).trim();
+  } else {
+    const m = text.match(/["\u201C]([^"\u201D]{6,240})["\u201D](\s*[\u2014\u2013-]\s*[A-Z][\w']*(?:\s[A-Z][\w']*)?)?/);
+    if (!m)
+      return { text };
+    line = m[0];
+  }
+  const m = line.match(/^["\u201C]?([\s\S]*?)["\u201D]?\s*(?:[\u2014\u2013]|\s-\s)\s*(.{1,60})$/);
+  const quote = (m ? m[1] : line).replace(/^["\u201C]|["\u201D]$/g, "").trim();
+  const quoteBy = m ? m[2].replace(/[*_]/g, "").trim() : undefined;
+  if (!quote)
+    return { text };
+  return { text: rest || text, quote: quote.slice(0, 300), quoteBy };
+}
 function builtinLine(hostId, slideId, vars) {
   const lines = BUILTIN_LINES[hostId in BUILTIN_LINES ? hostId : "past"];
   const t = lines[slideId] || BUILTIN_LINES.past[slideId];
@@ -979,11 +1026,16 @@ async function makeWrap(scanId, selected, userId) {
         throw new Error("The host mumbled something unreadable. Try again, or check that your model follows instructions.");
       }
     }
-    const rendered = slides.map((sl) => ({
-      id: sl.id,
-      title: sl.title,
-      text: written[sl.id] || builtinLine(session.host.kind === "builtin" ? session.host.id : "past", sl.id, vars)
-    }));
+    const rendered = slides.map((sl) => {
+      const slide = {
+        id: sl.id,
+        title: sl.title,
+        text: written[sl.id] || builtinLine(session.host.kind === "builtin" ? session.host.id : "past", sl.id, vars)
+      };
+      if (sl.id === "quotes")
+        Object.assign(slide, splitQuote(slide.text));
+      return slide;
+    });
     const s = session.stats;
     const chatsMentioned = new Map;
     for (const c of [s.longestChat, s.mostRerolledChat, ...s.topChats])
@@ -993,7 +1045,7 @@ async function makeWrap(scanId, selected, userId) {
       chatsMentioned.set(p.id, { id: p.id, name: p.name, characterName: p.characterName });
     const wrap = {
       id: uid(),
-      title: `${s.year}${s.scope === "character" ? ` \xB7 ${s.scopeName}` : ""} with ${session.host.name}`,
+      title: `${s.year}${s.scope !== "all" ? ` \xB7 ${s.scopeName}` : ""} with ${session.host.name}`,
       createdAt: Date.now(),
       year: s.year,
       scope: s.scope,
@@ -1072,15 +1124,11 @@ ${sample}` : "",
     const text = (await llm(userId, settings, system, user, settings.temperature)).trim();
     if (!text)
       throw new Error("The host had nothing to say. Try again.");
-    const slide = { id: "expose", title: "Exposed", text: text.slice(0, 1200), chatName: chatInfo.name, characterName: chatInfo.characterName };
-    const outroAt = wrap.slides.findIndex((s) => s.id === "outro");
-    if (outroAt >= 0)
-      wrap.slides.splice(outroAt, 0, slide);
-    else
-      wrap.slides.push(slide);
+    const slide = { id: "expose", title: "Exposed", text: text.slice(0, 1200), chatId, chatName: chatInfo.name, characterName: chatInfo.characterName };
+    wrap.slides.push(slide);
     wrap.tokensUsed += r.tokens + Math.ceil((system.length + user.length + text.length) / 4);
     await saveWrap(wrap, userId);
-    send(userId, { type: "expose_done", wrap, slideIndex: outroAt >= 0 ? outroAt : wrap.slides.length - 1 });
+    send(userId, { type: "expose_done", wrap, slideIndex: wrap.slides.length - 1 });
   } catch (err) {
     send(userId, { type: "error", where: "expose", message: err?.message || String(err) });
   } finally {
@@ -1142,7 +1190,7 @@ async function handle(payload, userId) {
         missing,
         errors,
         connections: connections.map((c) => ({ id: c.id, name: c.name || c.id, provider: c.provider, model: c.model, isDefault: c.is_default })),
-        characters: characters.map((c) => ({ id: c.id, name: c.name, avatar: c.avatar_url || null })).sort((a, b) => a.name.localeCompare(b.name))
+        characters: characters.map((c) => ({ id: c.id, name: c.name, avatar: characterAvatarUrl(c.id, c.image_id, "sm") })).sort((a, b) => a.name.localeCompare(b.name))
       });
       return sendLibrary(userId);
     }

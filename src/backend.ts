@@ -1,6 +1,7 @@
 declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 
 import {
+  characterAvatarUrl,
   DEFAULT_SETTINGS,
   fillMacros,
   fmt,
@@ -190,7 +191,15 @@ async function resolveHost(hostRef: string, settings: Settings, userId: string):
     if (!c) throw new Error('That host character no longer exists.')
     const card = [c.description, c.personality].filter(Boolean).map(t => clean(t, 1500)).join('\n\n')
     return {
-      host: { kind: 'character', id: c.id, name: c.name, emoji: '🎁', sprite: c.avatar_url || '', accent: '#e7c46a', avatar: c.avatar_url || null },
+      host: {
+        kind: 'character',
+        id: c.id,
+        name: c.name,
+        emoji: '🎁',
+        sprite: characterAvatarUrl(c.id, c.image_id, 'lg') || '',
+        accent: '#e7c46a',
+        avatar: characterAvatarUrl(c.id, c.image_id, 'sm'),
+      },
       prompt: settings.characterHostPrompt,
       card,
     }
@@ -224,10 +233,15 @@ async function scan(req: ScanRequest, userId: string) {
     progress('Finding your characters...')
 
     const allChars = await listAll(o => spindle.characters.list({ limit: 200, offset: o, userId }), 200)
-    const chars = req.scope === 'character' ? allChars.filter(c => c.id === req.characterId) : allChars
-    if (req.scope === 'character' && !chars.length) throw new Error('Pick a character to wrap.')
+    const pickedIds = new Set((req.characterIds || []).map(String))
+    const picking = req.scope === 'pick'
+    const chars = picking ? allChars.filter(c => pickedIds.has(c.id)) : allChars
+    if (picking && !chars.length) throw new Error('Pick at least one character to wrap.')
     const personas = await listAll(o => spindle.personas.list({ limit: 200, offset: o, userId }), 200).catch(() => [])
-    const scopeName = req.scope === 'character' ? chars[0].name : 'Everything'
+    const label = String(req.label || '').trim().slice(0, 60)
+    const single = picking && chars.length === 1
+    const scope = !picking ? 'all' : single ? 'character' : 'pick'
+    const scopeName = !picking ? 'Everything' : label || (single ? chars[0].name : chars.length <= 3 ? chars.map(c => c.name).join(', ') : `${chars.length} characters`)
 
     // Every chat that could have messages in this year.
     const yearStart = Date.UTC(year, 0, 1) / 1000 - 2 * 86400
@@ -243,7 +257,7 @@ async function scan(req: ScanRequest, userId: string) {
       }
     }
 
-    const builder = new StatsBuilder(year, tz, req.scope === 'character' ? 'character' : 'all', scopeName, [
+    const builder = new StatsBuilder(year, tz, scope, scopeName, [
       ...allChars.map(c => c.name),
       ...personas.map(p => p.name),
     ])
@@ -251,7 +265,7 @@ async function scan(req: ScanRequest, userId: string) {
     for (const { chat, char } of jobs) {
       const msgs = await fetchMessages(chat.id).catch(() => [] as FullMsg[])
       builder.addChat(
-        { id: chat.id, name: chat.name, characterId: char.id, characterName: char.name, avatar: char.avatar_url || null, created: chat.created_at },
+        { id: chat.id, name: chat.name, characterId: char.id, characterName: char.name, avatar: characterAvatarUrl(char.id, char.image_id, 'sm'), created: chat.created_at },
         msgs,
       )
       done++
@@ -259,15 +273,15 @@ async function scan(req: ScanRequest, userId: string) {
     }
 
     const stats = builder.finish()
-    if (!stats.totals.messages) throw new Error(`No messages found in ${year}${req.scope === 'character' ? ` with ${scopeName}` : ''}.`)
+    if (!stats.totals.messages) throw new Error(`No messages found in ${year}${picking ? ` with ${scopeName}` : ''}.`)
 
     // Pick chats: characters with the most chats, then each one's chats with the most messages.
     const picked: PickedChat[] = []
     const samples = new Map<string, string>()
     const userName = await userDisplayName(userId, stats)
     if (depth !== 'stats') {
-      const ranked = builder.rankedCharacters().slice(0, req.scope === 'character' ? 1 : settings.topCharCount)
-      const perChar = req.scope === 'character' ? Math.max(settings.chatsPerChar, 3) : settings.chatsPerChar
+      const ranked = builder.rankedCharacters().slice(0, single ? 1 : settings.topCharCount)
+      const perChar = single ? Math.max(settings.chatsPerChar, 3) : settings.chatsPerChar
       const all = builder.chats()
       const candidates: ChatStat[] = []
       for (const c of ranked) {
@@ -390,7 +404,7 @@ function activeSlides(session: ScanSession, settings: Settings, hasSamples: bool
 function statsBrief(s: WrapStats, user: string) {
   const t = s.totals
   const lines = [
-    `Year: ${s.year}. Scope: ${s.scope === 'character' ? `only chats with ${s.scopeName}` : 'everything'}.`,
+    `Year: ${s.year}. Scope: ${s.scope === 'all' ? 'everything' : `only chats with ${s.scopeName}`}.`,
     `Messages: ${fmt(t.messages)} total (${fmt(t.userMessages)} by ${user}, ${fmt(t.aiMessages)} by characters).`,
     `Words: ${fmt(t.userWords)} written by ${user} (avg ${s.avgUserWords} per message); characters wrote ${fmt(t.aiWords)} (avg ${s.avgAiWords}).`,
     `Chats active: ${t.chats} (${t.newChats} started this year). Characters: ${t.characters}.`,
@@ -411,11 +425,14 @@ function statsBrief(s: WrapStats, user: string) {
 
 const FORMAT_RULES = `FORMAT: For each slide, write a line with only "=== slide_id ===" and then the host's line underneath. Use the exact slide ids given. Each slide is 1 to 3 short sentences (under 60 words), spoken by the host directly to the user. Use the real numbers and names. No narration of actions longer than a few words, no preamble, nothing after the last slide.`
 
+const QUOTE_RULE = `For the quotes slide only: its first line must be QUOTE: "<a real line copied word for word from the excerpts, under 30 words>" — <who said it>. Your reaction goes on the lines after it.`
+
 function buildPrompt(session: ScanSession, settings: Settings, slides: SlideDef[], summaries: Map<string, string>, useSamples: Set<string>) {
   const s = session.stats
   const vars = statVars(s, session.userName, session.host.name)
   vars.char = session.host.name
-  const system = `${fillMacros(session.hostPrompt, vars)}\n\n${FORMAT_RULES}`
+  const rules = slides.some(sl => sl.id === 'quotes') ? `${FORMAT_RULES}\n${QUOTE_RULE}` : FORMAT_RULES
+  const system = `${fillMacros(session.hostPrompt, vars)}\n\n${rules}`
 
   const parts = [
     session.host.kind === 'character' && session.characterCard ? `ABOUT ${session.host.name.toUpperCase()} (you):\n${session.characterCard}` : '',
@@ -496,6 +513,28 @@ async function summarizeChat(chatId: string, charName: string, userName: string,
 
 // ---------- making the wrap ----------
 
+/** Pull the "QUOTE: ... — speaker" line out of the quotes slide. */
+function splitQuote(text: string): { text: string; quote?: string; quoteBy?: string } {
+  const lines = text.split('\n')
+  const i = lines.findIndex(l => /^\s*\**\s*quote\s*\**\s*:/i.test(l))
+  let line = ''
+  let rest = text
+  if (i >= 0) {
+    line = lines[i].replace(/^\s*\**\s*quote\s*\**\s*:\s*\**\s*/i, '').trim()
+    rest = lines.filter((_, j) => j !== i).join('\n').trim()
+  } else {
+    // No QUOTE line: fall back to the first quoted passage.
+    const m = text.match(/["“]([^"”]{6,240})["”](\s*[—–-]\s*[A-Z][\w']*(?:\s[A-Z][\w']*)?)?/)
+    if (!m) return { text }
+    line = m[0]
+  }
+  const m = line.match(/^["“]?([\s\S]*?)["”]?\s*(?:[—–]|\s-\s)\s*(.{1,60})$/)
+  const quote = (m ? m[1] : line).replace(/^["“]|["”]$/g, '').trim()
+  const quoteBy = m ? m[2].replace(/[*_]/g, '').trim() : undefined
+  if (!quote) return { text }
+  return { text: rest || text, quote: quote.slice(0, 300), quoteBy }
+}
+
 function builtinLine(hostId: string, slideId: string, vars: Record<string, string>) {
   const lines = BUILTIN_LINES[(hostId as 'past') in BUILTIN_LINES ? (hostId as 'past') : 'past']
   const t = lines[slideId] || BUILTIN_LINES.past[slideId]
@@ -548,11 +587,15 @@ async function makeWrap(scanId: string, selected: string[], userId: string) {
       }
     }
 
-    const rendered: RenderedSlide[] = slides.map(sl => ({
-      id: sl.id,
-      title: sl.title,
-      text: written[sl.id] || builtinLine(session.host.kind === 'builtin' ? session.host.id : 'past', sl.id, vars),
-    }))
+    const rendered: RenderedSlide[] = slides.map(sl => {
+      const slide: RenderedSlide = {
+        id: sl.id,
+        title: sl.title,
+        text: written[sl.id] || builtinLine(session.host.kind === 'builtin' ? session.host.id : 'past', sl.id, vars),
+      }
+      if (sl.id === 'quotes') Object.assign(slide, splitQuote(slide.text))
+      return slide
+    })
 
     const s = session.stats
     const chatsMentioned = new Map<string, { id: string; name: string; characterName: string }>()
@@ -561,7 +604,7 @@ async function makeWrap(scanId: string, selected: string[], userId: string) {
 
     const wrap: Wrap = {
       id: uid(),
-      title: `${s.year}${s.scope === 'character' ? ` · ${s.scopeName}` : ''} with ${session.host.name}`,
+      title: `${s.year}${s.scope !== 'all' ? ` · ${s.scopeName}` : ''} with ${session.host.name}`,
       createdAt: Date.now(),
       year: s.year,
       scope: s.scope,
@@ -637,14 +680,12 @@ async function exposeRun(wrapId: string, chatId: string, userId: string) {
     const text = (await llm(userId, settings, system, user, settings.temperature)).trim()
     if (!text) throw new Error('The host had nothing to say. Try again.')
 
-    // The outro stays last.
-    const slide: RenderedSlide = { id: 'expose', title: 'Exposed', text: text.slice(0, 1200), chatName: chatInfo.name, characterName: chatInfo.characterName }
-    const outroAt = wrap.slides.findIndex(s => s.id === 'outro')
-    if (outroAt >= 0) wrap.slides.splice(outroAt, 0, slide)
-    else wrap.slides.push(slide)
+    // Exposes live at the end, after the outro.
+    const slide: RenderedSlide = { id: 'expose', title: 'Exposed', text: text.slice(0, 1200), chatId, chatName: chatInfo.name, characterName: chatInfo.characterName }
+    wrap.slides.push(slide)
     wrap.tokensUsed += r.tokens + Math.ceil((system.length + user.length + text.length) / 4)
     await saveWrap(wrap, userId)
-    send(userId, { type: 'expose_done', wrap, slideIndex: outroAt >= 0 ? outroAt : wrap.slides.length - 1 })
+    send(userId, { type: 'expose_done', wrap, slideIndex: wrap.slides.length - 1 })
   } catch (err: any) {
     send(userId, { type: 'error', where: 'expose', message: err?.message || String(err) })
   } finally {
@@ -714,7 +755,7 @@ async function handle(payload: any, userId: string) {
         missing,
         errors,
         connections: connections.map(c => ({ id: c.id, name: c.name || c.id, provider: c.provider, model: c.model, isDefault: c.is_default })),
-        characters: characters.map(c => ({ id: c.id, name: c.name, avatar: c.avatar_url || null })).sort((a, b) => a.name.localeCompare(b.name)),
+        characters: characters.map(c => ({ id: c.id, name: c.name, avatar: characterAvatarUrl(c.id, c.image_id, 'sm') })).sort((a, b) => a.name.localeCompare(b.name)),
       })
       return sendLibrary(userId)
     }

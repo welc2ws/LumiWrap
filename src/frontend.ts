@@ -8,7 +8,6 @@ import {
   type Estimate,
   type Host,
   type PickedChat,
-  type Scope,
   type Settings,
   type SlideDef,
   type Wrap,
@@ -16,13 +15,14 @@ import {
   type WrapSummary,
 } from './shared'
 import { STYLES } from './styles'
-import { esc, openPlayer, type PlayerHandle } from './player'
+import { avatar, esc, openPlayer, type PlayerHandle } from './player'
 
 const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="9" width="17" height="11.5" rx="1.6"/><path d="M2.5 9h19V6.8a.8.8 0 0 0-.8-.8H3.3a.8.8 0 0 0-.8.8z"/><path d="M12 6v14.5"/><path d="M12 6c-1.2-2.6-4.6-3.4-5.2-1.6C6.2 6.2 9.6 6.4 12 6zM12 6c1.2-2.6 4.6-3.4 5.2-1.6.6 1.8-2.8 2-5.2 1.6z"/></svg>`
 
 const GIFT = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="9.5" width="17" height="11" rx="1.6" fill="currentColor"/><rect x="2.5" y="6.5" width="19" height="3.6" rx=".9" fill="currentColor" opacity=".85"/><rect x="10.6" y="6.5" width="2.8" height="14" fill="#f3d27a"/><path d="M12 6.6c-1.3-2.7-4.8-3.5-5.4-1.6-.6 1.9 3 2.1 5.4 1.6zM12 6.6c1.3-2.7 4.8-3.5 5.4-1.6.6 1.9-3 2.1-5.4 1.6z" fill="#f3d27a"/></svg>`
 
 const SNOWFLAKE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2v20M3.3 7l17.4 10M3.3 17 20.7 7"/><path d="m9.5 3.5 2.5 2 2.5-2M9.5 20.5l2.5-2 2.5 2M4 10.2l3-.6-1-2.9M20 13.8l-3 .6 1 2.9M4 13.8l3 .6-1 2.9M20 10.2l-3-.6 1-2.9"/></svg>`
+const CHEVRON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`
 const PLAY = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>`
 const TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.8h6V7M6.5 7l.9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3L17.5 7"/></svg>`
 const PENCIL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`
@@ -103,7 +103,7 @@ export function setup(ctx: SpindleFrontendContext) {
         <span class="lw-logo">${GIFT}</span>
         <div class="lw-head-text">
           <div class="lw-title">Lumiwrap</div>
-          <div class="lw-tagline">your year, wrapped with a bow</div>
+          <div class="lw-tagline">That's a wrap!</div>
         </div>
       </header>
 
@@ -127,9 +127,12 @@ export function setup(ctx: SpindleFrontendContext) {
           </div>
           <div class="lw-seg" data-el="scope">
             <button data-scope="all" class="on">Everything</button>
-            <button data-scope="character">One character</button>
+            <button data-scope="pick">Pick characters</button>
           </div>
-          <label class="lw-field" data-el="char-wrap" hidden><span>Character</span><select data-el="char"></select></label>
+          <div class="lw-pickwrap" data-el="char-wrap" hidden>
+            <div class="lw-cp" data-el="char-picker"></div>
+            <label class="lw-field"><span>Name this Wrapped (optional)</span><input type="text" data-el="label" maxlength="60" placeholder="e.g. Dream SMP"></label>
+          </div>
         </div>
 
         <div class="lw-card">
@@ -148,7 +151,7 @@ export function setup(ctx: SpindleFrontendContext) {
         <div class="lw-card">
           <div class="lw-step"><span class="lw-ornament">3</span>Who reads it to you</div>
           <div class="lw-hosts" data-el="hosts"></div>
-          <label class="lw-field" data-el="hostchar-wrap" hidden><span>Character host</span><select data-el="hostchar"></select></label>
+          <div class="lw-cp" data-el="host-picker" hidden></div>
         </div>
 
         <button class="lw-primary" data-el="scan">${SNOWFLAKE}<span>Scan my year</span></button>
@@ -254,11 +257,11 @@ export function setup(ctx: SpindleFrontendContext) {
     yearUp: $<HTMLButtonElement>('year-up'),
     scope: $('scope'),
     charWrap: $('char-wrap'),
-    char: $<HTMLSelectElement>('char'),
+    charPicker: $('char-picker'),
+    label: $<HTMLInputElement>('label'),
     depths: $('depths'),
     hosts: $('hosts'),
-    hostcharWrap: $('hostchar-wrap'),
-    hostchar: $<HTMLSelectElement>('hostchar'),
+    hostPicker: $('host-picker'),
     scan: $<HTMLButtonElement>('scan'),
     progress: $('progress'),
     progressText: $('progress-text'),
@@ -313,7 +316,9 @@ export function setup(ctx: SpindleFrontendContext) {
   let sprites: Record<string, string> = {}
   let initErrors: string[] = []
   let missing: string[] = []
-  let scope: Scope = 'all'
+  let scope: 'all' | 'pick' = 'all'
+  let pickedChars = new Set<string>()
+  let hostCharId = ''
   let depth: Depth = 'stats'
   let hostRef = 'past'
   let busy = ''
@@ -379,21 +384,161 @@ export function setup(ctx: SpindleFrontendContext) {
       : `<b>Something didn't load.</b><p>${initErrors.map(esc).join('<br>')}</p><button class="lw-ghost lw-small" data-retry>Try again</button>`
   }
 
+  // ---------- character pickers (Peanut Gallery style) ----------
+  interface Picker {
+    render(): void
+    close(): void
+  }
+
+  function makePicker(host: HTMLElement, multi: boolean, getSel: () => string[], setSel: (ids: string[]) => void): Picker {
+    let open = false
+    host.innerHTML = `
+      <button class="lw-pill" data-pill aria-expanded="false"><span class="lw-pill-av" data-av></span>
+        <span class="lw-pill-text"><span class="lw-pill-main" data-main></span><span class="lw-pill-sub" data-sub></span></span>
+        <span class="lw-pill-chev">${CHEVRON}</span></button>
+      <div class="lw-cp-panel" data-panel hidden>
+        <input type="text" data-search placeholder="Search characters...">
+        <div class="lw-cp-list" data-list></div>
+        ${multi ? `<div class="lw-cp-foot"><button class="lw-ghost lw-small" data-all>Select shown</button><button class="lw-ghost lw-small" data-none>Clear</button><span class="lw-cp-count" data-count></span><button class="lw-ghost lw-small" data-done>Done</button></div>` : ''}
+      </div>`
+    const q = (sel: string) => host.querySelector(sel) as HTMLElement
+    const pill = q('[data-pill]')
+    const panel = q('[data-panel]')
+    const search = q('[data-search]') as HTMLInputElement
+    const list = q('[data-list]')
+
+    const shown = () => {
+      const term = search.value.trim().toLowerCase()
+      return characters.filter(c => !term || c.name.toLowerCase().includes(term))
+    }
+
+    function renderPill() {
+      const sel = getSel().map(id => characters.find(c => c.id === id)).filter(Boolean) as typeof characters
+      const av = q('[data-av]')
+      const main = q('[data-main]')
+      const sub = q('[data-sub]')
+      if (!sel.length) {
+        av.innerHTML = `<div class="lw-mini lw-mini-empty">${GIFT}</div>`
+        main.textContent = multi ? 'Pick characters' : 'Pick a character'
+        sub.textContent = characters.length ? `${characters.length} in your library` : missing.includes('characters') ? 'Grant the Characters permission first' : 'No characters found'
+      } else if (!multi || sel.length === 1) {
+        av.innerHTML = avatar(sel[0].name, sel[0].avatar, 'lw-mini')
+        main.textContent = sel[0].name
+        sub.textContent = multi ? '1 character' : 'Hosting your Lumiwrap'
+      } else {
+        av.innerHTML = `<span class="lw-stack">${sel.slice(0, 3).map(c => avatar(c.name, c.avatar, 'lw-mini')).join('')}</span>`
+        main.textContent = `${sel.length} characters`
+        sub.textContent = sel.map(c => c.name).join(', ')
+      }
+      pill.setAttribute('aria-expanded', String(open))
+      pill.classList.toggle('open', open)
+    }
+
+    function renderList() {
+      panel.hidden = !open
+      if (!open) return
+      const sel = new Set(getSel())
+      const rows = shown()
+      list.innerHTML = rows.length
+        ? rows
+            .map(
+              c => `<button class="lw-cp-row${sel.has(c.id) ? ' on' : ''}" data-id="${esc(c.id)}">
+                ${avatar(c.name, c.avatar, 'lw-mini')}<span class="lw-cp-name">${esc(c.name)}</span>
+                ${multi ? `<span class="lw-cp-box">${sel.has(c.id) ? '✓' : ''}</span>` : sel.has(c.id) ? '<span class="lw-cp-tick">✓</span>' : ''}</button>`,
+            )
+            .join('')
+        : `<div class="lw-hint lw-pad">${characters.length ? 'No characters match.' : 'No characters found.'}</div>`
+      const count = host.querySelector('[data-count]')
+      if (count) count.textContent = `${sel.size} picked`
+    }
+
+    pill.addEventListener('click', () => {
+      open = !open
+      if (open) {
+        search.value = ''
+        if (!characters.length) ctx.sendToBackend({ type: 'init' })
+      }
+      renderPill()
+      renderList()
+      if (open) search.focus()
+    })
+    search.addEventListener('input', renderList)
+    list.addEventListener('click', e => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-id]')
+      if (!row) return
+      const id = row.dataset.id!
+      if (multi) {
+        const sel = new Set(getSel())
+        if (sel.has(id)) sel.delete(id)
+        else sel.add(id)
+        setSel([...sel])
+      } else {
+        setSel([id])
+        open = false
+      }
+      renderPill()
+      renderList()
+    })
+    host.querySelector('[data-all]')?.addEventListener('click', () => {
+      setSel([...new Set([...getSel(), ...shown().map(c => c.id)])])
+      renderPill()
+      renderList()
+    })
+    host.querySelector('[data-none]')?.addEventListener('click', () => {
+      setSel([])
+      renderPill()
+      renderList()
+    })
+    host.querySelector('[data-done]')?.addEventListener('click', () => {
+      open = false
+      renderPill()
+      renderList()
+    })
+    return {
+      render() {
+        renderPill()
+        renderList()
+      },
+      close() {
+        open = false
+        renderPill()
+        renderList()
+      },
+    }
+  }
+
+  const charPicker = makePicker(
+    el.charPicker,
+    true,
+    () => [...pickedChars],
+    ids => {
+      pickedChars = new Set(ids)
+      invalidateScan('Characters changed. Scan again to update.')
+    },
+  )
+  const hostPicker = makePicker(
+    el.hostPicker,
+    false,
+    () => (hostCharId ? [hostCharId] : []),
+    ids => {
+      hostCharId = ids[0] || ''
+      hostRef = `char:${hostCharId}`
+      renderHostPicker()
+      refreshEstimate()
+    },
+  )
+
   function renderCharacterSelects() {
-    const empty = missing.includes('characters') ? 'Grant the Characters permission first' : 'No characters found'
-    const opts = characters.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
-    const keepChar = el.char.value
-    const keepHost = el.hostchar.value
-    el.char.innerHTML = opts || `<option value="">${empty}</option>`
-    el.hostchar.innerHTML = opts || `<option value="">${empty}</option>`
-    if (keepChar && characters.some(c => c.id === keepChar)) el.char.value = keepChar
-    if (keepHost && characters.some(c => c.id === keepHost)) el.hostchar.value = keepHost
-    if (hostRef.startsWith('char:')) hostRef = `char:${el.hostchar.value}`
+    const ids = new Set(characters.map(c => c.id))
+    pickedChars = new Set([...pickedChars].filter(id => ids.has(id)))
+    if (hostCharId && !ids.has(hostCharId)) hostCharId = ''
+    charPicker.render()
+    hostPicker.render()
   }
 
   function renderScope() {
     el.scope.querySelectorAll<HTMLButtonElement>('[data-scope]').forEach(b => b.classList.toggle('on', b.dataset.scope === scope))
-    el.charWrap.hidden = scope !== 'character'
+    el.charWrap.hidden = scope !== 'pick'
   }
 
   function renderDepth() {
@@ -410,13 +555,17 @@ export function setup(ctx: SpindleFrontendContext) {
             <span class="lw-tile-name">${esc(h.name)}</span><span class="lw-tile-sub">${esc(h.title)}</span></button>`,
         )
         .join('') +
-      `<button class="lw-host-tile${hostRef.startsWith('char:') ? ' on' : ''}" data-host="char" style="--tile:#d9b45a">
-        <span class="lw-tile-art"><span>🎁</span></span><span class="lw-tile-name">A character</span><span class="lw-tile-sub">from your library</span></button>`
-    el.hostcharWrap.hidden = !hostRef.startsWith('char:')
+      (() => {
+        const c = characters.find(x => x.id === hostCharId)
+        const art = c ? avatar(c.name, c.avatar, 'lw-tile-pfp') : '<span>🎁</span>'
+        return `<button class="lw-host-tile${hostRef.startsWith('char:') ? ' on' : ''}" data-host="char" style="--tile:#d9b45a">
+          <span class="lw-tile-art">${art}</span><span class="lw-tile-name">${esc(c ? c.name : 'A character')}</span><span class="lw-tile-sub">${c ? 'from your library' : 'from your library'}</span></button>`
+      })()
+    el.hostPicker.hidden = !hostRef.startsWith('char:')
   }
 
   function currentHostRef() {
-    if (hostRef.startsWith('char:')) return el.hostchar.value ? `char:${el.hostchar.value}` : ''
+    if (hostRef.startsWith('char:')) return hostCharId ? `char:${hostCharId}` : ''
     return hostRef
   }
 
@@ -469,7 +618,7 @@ export function setup(ctx: SpindleFrontendContext) {
         <div><b>${fmt(t.chats)}</b><small>chats</small></div>
         <div><b>${fmt(t.characters)}</b><small>characters</small></div>
       </div>
-      <div class="lw-hint">in ${scan.stats.year}${scan.stats.scope === 'character' ? ` with ${esc(scan.stats.scopeName)}` : ''}</div>`
+      <div class="lw-hint">in ${scan.stats.year}${scan.stats.scope !== 'all' ? ` with ${esc(scan.stats.scopeName)}` : ''}</div>`
 
     el.pickedWrap.hidden = scan.depth === 'stats'
     el.pickedHint.textContent = scan.depth === 'deep' ? '(tokens to read each)' : '(tokens per sample)'
@@ -679,11 +828,11 @@ export function setup(ctx: SpindleFrontendContext) {
   el.scope.addEventListener('click', e => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('[data-scope]')
     if (!b || b.dataset.scope === scope) return
-    scope = b.dataset.scope as Scope
+    scope = b.dataset.scope as 'all' | 'pick'
     renderScope()
     invalidateScan('Scope changed. Scan again to update.')
   })
-  el.char.addEventListener('change', () => invalidateScan('Character changed. Scan again to update.'))
+  el.label.addEventListener('change', () => invalidateScan())
 
   el.depths.addEventListener('click', e => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('[data-depth]')
@@ -696,16 +845,12 @@ export function setup(ctx: SpindleFrontendContext) {
   el.hosts.addEventListener('click', e => {
     const tile = (e.target as HTMLElement).closest<HTMLElement>('[data-host]')
     if (!tile) return
-    hostRef = tile.dataset.host === 'char' ? `char:${el.hostchar.value}` : tile.dataset.host!
+    hostRef = tile.dataset.host === 'char' ? `char:${hostCharId}` : tile.dataset.host!
     if (tile.dataset.host === 'char' && !characters.length) ctx.sendToBackend({ type: 'init' })
     renderHostPicker()
+    hostPicker.render()
     refreshEstimate()
   })
-  el.hostchar.addEventListener('change', () => {
-    if (hostRef.startsWith('char:')) hostRef = `char:${el.hostchar.value}`
-    refreshEstimate()
-  })
-
   function refreshEstimate() {
     if (!scan) return
     renderResult()
@@ -716,7 +861,9 @@ export function setup(ctx: SpindleFrontendContext) {
     if (busy) return
     const host = currentHostRef()
     if (!host) return setStatus('Pick a character to host, or choose one of the girls.', 'error')
-    if (scope === 'character' && !el.char.value) return setStatus('Pick a character to wrap.', 'error')
+    hostPicker.close()
+    if (scope === 'pick' && !pickedChars.size) return setStatus('Pick at least one character to wrap.', 'error')
+    charPicker.close()
     setStatus('')
     scan = null
     el.result.hidden = true
@@ -728,7 +875,8 @@ export function setup(ctx: SpindleFrontendContext) {
       request: {
         year: Number(el.year.value) || thisYear,
         scope,
-        characterId: el.char.value,
+        characterIds: [...pickedChars],
+        label: el.label.value.trim(),
         depth,
         host,
         tzOffset: new Date().getTimezoneOffset(),

@@ -1,7 +1,8 @@
 // Types and defaults shared by the backend and the frontend.
 
 export type Depth = 'stats' | 'highlights' | 'deep'
-export type Scope = 'all' | 'character'
+/** 'character' = exactly one picked character, 'pick' = several. */
+export type Scope = 'all' | 'character' | 'pick'
 export type HostId = 'past' | 'present' | 'future'
 
 // ---------- stats ----------
@@ -156,7 +157,7 @@ export const DEFAULT_SLIDES: SlideDef[] = [
   { id: 'rerolls', title: 'Reroll report', enabled: true, needs: 'stats', prompt: 'Roast or celebrate how many times they rerolled (swiped) replies, and their most-rerolled chat. Are they picky?' },
   { id: 'personas', title: 'Who you were', enabled: true, needs: 'stats', prompt: 'Talk about the personas they played as this year, especially their most-used one.' },
   { id: 'words', title: 'Your top words', enabled: true, needs: 'stats', prompt: "Present their most-used words like top songs, and the words their characters kept saying back. Read into it." },
-  { id: 'quotes', title: 'Quotes of the year', enabled: true, needs: 'highlights', prompt: 'Pick the best or funniest real line from the excerpts and quote it (keep the quote short). Point out a running joke or pattern if you see one.' },
+  { id: 'quotes', title: 'Quotes of the year', enabled: true, needs: 'highlights', prompt: 'Pick the best, funniest or most unhinged real line from the excerpts as the quote of the year, then react to it. Point out a running joke or pattern if you see one.' },
   { id: 'story_arcs', title: 'Previously on...', enabled: true, needs: 'deep', prompt: 'Recap the biggest storylines from the chat summaries in a dramatic "previously on" way. Spoil everything.' },
   { id: 'personality', title: 'Your RP personality', enabled: true, needs: 'stats', prompt: 'Reveal their RP personality archetype and explain why the stats prove it.' },
   { id: 'outro', title: 'See you next year', enabled: true, needs: 'stats', prompt: 'Wrap it up. A heartfelt (in your own way) send-off and a tease for {{nextYear}}.' },
@@ -194,7 +195,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   connectionId: '',
-  temperature: 0.9,
+  temperature: 1,
   sampleCount: 14,
   topCharCount: 3,
   chatsPerChar: 2,
@@ -216,6 +217,9 @@ export const DEFAULT_SETTINGS: Settings = {
 /** Fill missing hosts/slides after updates, keep the user's edits and order. */
 export function normalizeSettings(saved: Partial<Settings>): Settings {
   const s: Settings = { ...DEFAULT_SETTINGS, ...saved }
+  // v0.1/0.2 saved the old 0.9 default; move untouched settings to the new default of 1.
+  if (!(saved as any).version && Number(saved.temperature) === 0.9) s.temperature = 1
+  ;(s as any).version = 3
   const hosts = Array.isArray(saved.hosts) ? saved.hosts : []
   s.hosts = DEFAULT_HOSTS.map(d => ({ ...d, ...(hosts.find(h => h?.id === d.id) || {}) }))
   const slides = Array.isArray(saved.slides) ? saved.slides.filter(x => x && SLIDE_IDS.includes(x.id)) : []
@@ -224,7 +228,7 @@ export function normalizeSettings(saved: Partial<Settings>): Settings {
     ...slides.map(x => ({ ...DEFAULT_SLIDES.find(d => d.id === x.id)!, ...x, needs: DEFAULT_SLIDES.find(d => d.id === x.id)!.needs })),
     ...DEFAULT_SLIDES.filter(d => !seen.has(d.id)),
   ]
-  s.temperature = clamp(Number(s.temperature), 0, 2, 0.9)
+  s.temperature = clamp(Number(s.temperature), 0, 2, 1)
   s.sampleCount = Math.round(clamp(Number(s.sampleCount), 4, 60, 14))
   s.topCharCount = Math.round(clamp(Number(s.topCharCount), 1, 10, 3))
   s.chatsPerChar = Math.round(clamp(Number(s.chatsPerChar), 1, 10, 2))
@@ -260,8 +264,11 @@ function clamp(n: number, lo: number, hi: number, fallback: number) {
 
 export interface ScanRequest {
   year: number
-  scope: Scope
-  characterId?: string
+  scope: 'all' | 'pick'
+  /** Characters to include when scope is 'pick'. */
+  characterIds?: string[]
+  /** Optional name for a picked group, e.g. a fandom. */
+  label?: string
   depth: Depth
   /** 'past' | 'present' | 'future' | 'char:<id>' */
   host: string
@@ -302,7 +309,11 @@ export interface RenderedSlide {
   id: string
   title: string
   text: string
+  /** Quotes slide: the quote shown big on the panel. */
+  quote?: string
+  quoteBy?: string
   /** Set on Expose me slides. */
+  chatId?: string
   chatName?: string
   characterName?: string
 }
@@ -332,6 +343,12 @@ export interface WrapSummary {
   hostName: string
   hostEmoji: string
   scopeName: string
+}
+
+/** Lumiverse avatar URL for a character (same origin as the app). */
+export function characterAvatarUrl(id: string, imageId?: string | null, size: 'sm' | 'lg' = 'sm') {
+  if (!id) return null
+  return imageId ? `/api/v1/images/${imageId}?size=${size}` : `/api/v1/characters/${id}/avatar?size=${size}`
 }
 
 export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
