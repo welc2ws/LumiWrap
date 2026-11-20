@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0",
+  "name": "Lumiwrap",
+  "identifier": "lumiwrap",
+  "author": "welc2ws",
+  "homepage": "https://github.com/welc2ws/lumiwrap",
+  "description": "Your year in Lumiverse, wrapped. A Christmas and New Year recap of your roleplay, read to you by a host of your choice. You pick what gets scanned and see the token cost first.",
+  "permissions": [
+    "generation",
+    "characters",
+    "chats",
+    "chat_mutation",
+    "personas",
+    "app_manipulation"
+  ],
+  "entry_backend": "dist/backend.js",
+  "entry_frontend": "dist/frontend.js"
+}
